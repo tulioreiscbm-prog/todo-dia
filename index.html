@@ -899,7 +899,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1066,7 +1066,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       console.warn('sync', e);
       S.net = e.codigo === 'rede' ? 'offline' : 'erro'; S.syncErr = e.erro || '';
       if (e.codigo === 'chave') S.syncErr = 'A chave deste aparelho não vale mais. Cole a chave nova em Ajustes › Conexão.';
-      if (S.outbox.length && e.codigo === 'rede') { const wait = Math.min(300000, 8000 * Math.pow(2, S.retryN++)); S.retryTimer = setTimeout(sync, wait); }
+      if (e.codigo === 'rede') { const wait = Math.min(300000, 5000 * Math.pow(2, S.retryN++)); S.retryTimer = setTimeout(sync, wait); }
     } finally {
       S.sending = false; applyView(); render();
       if (S.net === 'ok' && S.outbox.length) setTimeout(sync, 200); // chegou mais coisa enquanto enviava
@@ -1974,7 +1974,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
   function syncHtml() {
     const n = S.outbox.length;
     if (S.net === 'sync') return '<span class="sync"><i></i>sincronizando</span>';
-    if (S.net === 'offline') return `<span class="sync off"><i></i>${n ? n + ' na fila' : 'sem internet'}</span>`;
+    if (S.net === 'offline') return `<span class="sync off"><i></i>${n ? n + ' na fila' : navigator.onLine === false ? 'sem internet' : 'reconectando…'}</span>`;
     if (S.net === 'erro') return '<span class="sync off"><i></i>verificar conexão</span>';
     if (n) return `<span class="sync off"><i></i>${n} na fila</span>`;
     return '';
@@ -1998,7 +1998,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       else if (tab === 'relatorios') body = viewRelatorios();
       else body = viewAjustes();
       const sub = tab === 'ajustes' && S.ui.sub;
-      const sync = `<span id="syncInd">${syncHtml()}</span>`;
+      const sync = `<button id="syncInd" data-act="go-conexao" aria-label="Situação da conexão com a planilha">${syncHtml()}</button>`;
       const header = tab === 'inicio'
         ? `<div class="brand">${LOGO()}${WORD}</div>${sync}<button class="icon-btn" data-act="tab" data-tab="ajustes" aria-label="Ajustes">${ic('gear')}</button>`
         : sub ? `<button class="icon-btn" data-act="sub" data-sub="" aria-label="Voltar">${ic('left')}</button><span class="top-title">${esc(SUBS[sub] || '')}</span>${sync}`
@@ -2072,6 +2072,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       case 'new': S.ui.quick = null; openLanc(); break;
       case 'close-sheet': if (st && st.kind === 'cat' && st.back) { const b = st.back; sheetState = b; closeSheet(true); if (b.kind === 'lanc') renderLanc(); else if (b.kind === 'rec') renderRec(); } else closeSheet(); break;
       case 'flush': S.retryN = 0; sync(); break;
+      case 'go-conexao': S.ui.tab = 'ajustes'; S.ui.sub = 'conexao'; render(); window.scrollTo(0, 0); break;
       case 'install': if (S.installPrompt) { const p = S.installPrompt; S.installPrompt = null; try { p.prompt(); await p.userChoice; } catch { /* ok */ } render(); } break;
       case 'reconnect': S.ui.prevConn = S.conn; S.ui.setupUrl = S.conn ? S.conn.url : ''; S.ui.setupKey = ''; S.ui.setupErr = ''; S.conn = null; render(); break;
       case 'setup-cancel': if (S.ui.prevConn) { S.conn = S.ui.prevConn; S.ui.prevConn = null; render(); } break;
