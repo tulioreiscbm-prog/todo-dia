@@ -285,3 +285,8 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .stack, .section, .field, .sheet-in, .more-in { grid-template-columns: minmax(0, 1fr); }
 .stack > *, .section > *, .field > *, .sheet-in > *, .more-in > * { min-width: 0; }
 .hero .lead { font-family: var(--f-display); font-size: 17px; font-weight: 600; color: var(--ink-2); letter-spacing: -.01em; }
+/* Tela de trava */
+.lock { min-height: 100vh; display: grid; place-items: center; padding-block: 40px; }
+.lock-in { display: grid; justify-items: center; gap: 16px; text-align: center; }
+.lock-in .lock-logo { width: 88px; height: 88px; }
+.lock-in .word { font-size: 32px; }

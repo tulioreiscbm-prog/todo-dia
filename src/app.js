@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.0.1';
+  const VERSION = '2.1.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -42,6 +42,7 @@
     tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     wallet: '<path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><circle cx="16" cy="14.5" r="1.2"/>',
     brain: '<path d="M12 3v18M8 7a3 3 0 0 0-3 3 3 3 0 0 0 1 5 3 3 0 0 0 6 1M16 7a3 3 0 0 1 3 3 3 3 0 0 1-1 5 3 3 0 0 1-6 1M8 7a3 3 0 0 1 4-3M16 7a3 3 0 0 0-4-3"/>',
+    lock: '<rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.6" r="1.3"/>',
     calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
   };
   const ic = (n, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
@@ -77,7 +78,7 @@
   const iniciais = (s) => { const w = String(s || '?').replace(/[^\p{L}\p{N} ]/gu, '').trim().split(/\s+/); return ((w[0] || '?')[0] + (w[1] ? w[1][0] : (w[0] || '').slice(1, 2))).toUpperCase(); };
 
   // ---------- Armazenamento no aparelho (abre instantâneo, funciona sem sinal) ----------
-  const LS = { data: 'tododia.data.v2', outbox: 'tododia.outbox.v2', conn: 'tododia.conn.v2', ui: 'tododia.ui.v2' };
+  const LS = { data: 'tododia.data.v2', outbox: 'tododia.outbox.v2', conn: 'tododia.conn.v2', ui: 'tododia.ui.v2', lock: 'tododia.lock.v1' };
   const lsGet = (k) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* armazenamento indisponível */ } };
   const lsDel = (k) => { try { localStorage.removeItem(k); } catch { /* ok */ } };
@@ -253,6 +254,69 @@
     if (S.net === 'erro' && S.syncErr) out.push(`<div class="banner">${ic('alert')}<span>${esc(S.syncErr)} <button data-act="sub" data-sub="conexao">Ver conexão</button></span></div>`);
     if (n && S.net !== 'sync') out.push(`<div class="banner">${ic('cloud')}<span>${n === 1 ? '1 alteração guardada' : n + ' alterações guardadas'} no aparelho, esperando a internet para ir para a planilha. <button data-act="flush">Enviar agora</button></span></div>`);
     return out.join('');
+  }
+
+  // ---------- Trava com a digital (chave de acesso do próprio celular) ----------
+  const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64u = (s) => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(b, (c) => c.charCodeAt(0)); };
+  const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+  const lockCfg = () => lsGet(LS.lock);
+  async function biometriaDisponivel() {
+    try { return !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch { return false; }
+  }
+  async function verificarDigital() {
+    const cfg = lockCfg(); if (!cfg || !cfg.credId) return true;
+    const cred = await navigator.credentials.get({ publicKey: {
+      challenge: rand(32), rpId: location.hostname, timeout: 60000, userVerification: 'required',
+      allowCredentials: [{ type: 'public-key', id: unb64u(cfg.credId), transports: ['internal', 'hybrid'] }],
+    } });
+    return !!cred;
+  }
+  async function ligarTrava() {
+    if (!(await biometriaDisponivel())) { toast('Este aparelho não oferece digital para sites. Confira se há uma digital ou bloqueio de tela cadastrado.'); return; }
+    try {
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: rand(32), rp: { name: 'Todo dIA', id: location.hostname },
+        user: { id: rand(16), name: 'Todo dIA', displayName: 'Todo dIA' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+        timeout: 60000, attestation: 'none',
+      } });
+      if (!cred) return;
+      lsSet(LS.lock, { credId: b64u(cred.rawId), em: Date.now() });
+      S.ui.lockErr = ''; render(); toast('Trava ligada. O app vai pedir a digital ao abrir.');
+    } catch (e) { console.warn('trava', e); toast(e && e.name === 'NotAllowedError' ? 'Cadastro cancelado.' : 'Não consegui ligar a trava neste aparelho.'); }
+  }
+  async function desligarTrava() {
+    try { if (!(await verificarDigital())) return; } catch (e) { toast('É preciso confirmar com a digital para desligar.'); return; }
+    lsDel(LS.lock); render(); toast('Trava desligada.');
+  }
+  let unlocking = false;
+  async function desbloquear() {
+    if (unlocking) return; unlocking = true; S.ui.lockErr = ''; render();
+    try {
+      if (await verificarDigital()) { S.locked = false; S.ui.lockErr = ''; render(); if (S.conn) sync(); if (S.ui.abrirLancar) { S.ui.abrirLancar = false; setTimeout(() => openLanc(), 150); } }
+    } catch (e) {
+      console.warn('desbloquear', e);
+      S.ui.lockErr = e && e.name === 'NotAllowedError' ? 'Não confirmado. Toque para tentar de novo.' : 'Não consegui usar a digital agora. Toque para tentar de novo.';
+    } finally { unlocking = false; render(); }
+  }
+  function trancar() { if (!lockCfg()) return; S.locked = true; closeSheet(true); sheetState = null; render(); }
+  function viewLock() {
+    return `<div class="lock wrap"><div class="lock-in">${LOGO('lock-logo')}${WORD}
+      <p class="small muted" style="margin:0">Seus gastos estão protegidos pela sua digital.</p>
+      <button class="btn pri" data-act="unlock" ${unlocking ? 'disabled' : ''} style="min-width:240px">${ic('lock')}${unlocking ? 'Aguardando a digital…' : 'Desbloquear'}</button>
+      ${S.ui.lockErr ? `<p class="err" role="alert" style="margin:0">${esc(S.ui.lockErr)}</p>` : ''}
+      <p class="tiny muted" style="margin:0;max-width:300px">Se a digital falhar, a mesma janela aceita o PIN ou o padrão do celular.</p></div></div>`;
+  }
+  function viewTrava() {
+    const on = !!lockCfg();
+    return `<div class="stack">
+      <p class="small ink2" style="margin:0">Com a trava ligada, o Todo dIA pede a sua digital (ou o PIN do celular) ao abrir e quando você volta depois de 1 minuto fora dele. É o mesmo recurso de "chave de acesso" que os bancos usam: a digital nunca sai do aparelho.</p>
+      <div class="card stack" style="gap:12px"><div class="row between"><b>Trava com a digital</b><span class="pill ${on ? 'acc' : ''}">${on ? 'Ligada' : 'Desligada'}</span></div>
+        ${on ? `<button class="btn danger" data-act="lock-off">Desligar a trava</button><button class="btn" data-act="lock-now">${ic('lock')}Trancar agora</button>`
+          : `<button class="btn pri" data-act="lock-on">${ic('lock')}Ligar a trava</button><p class="tiny muted" style="margin:0">O Android vai perguntar se quer criar uma "chave de acesso" para este site. Confirme com a digital. Ela fica guardada no seu Gerenciador de Senhas do Google.</p>`}</div>
+      <p class="tiny muted" style="margin:0">A trava protege o app contra quem pegar o celular. A planilha continua protegida pela chave secreta.</p></div>`;
   }
 
   // ---------- Telas ----------
@@ -521,6 +585,7 @@
     if (sub === 'backup' || sub === 'conexao') return viewConexao();
     if (sub === 'lixeira') return viewLixeira();
     if (sub === 'sobre') return viewSobre();
+    if (sub === 'trava') return viewTrava();
     if (sub === 'receber') return viewReceber();
     const totFix = E.sum(S.recorrentes.filter((r) => r.tipo !== 'receita'), (r) => E.valorRecorrente(r, ymHoje()) || E.valorRecorrente(r, E.addMonthsYM(ymHoje(), 1)) || 0);
     const item = (k, icn, t, s) => `<button class="li" data-act="sub" data-sub="${k}"><span class="mono">${ic(icn)}</span><span class="grow"><span class="t" style="display:block">${t}</span><span class="s" style="display:block">${s}</span></span>${ic('right', 'chev')}</button>`;
@@ -536,6 +601,7 @@
         ${item('receber', 'users', 'A receber da família', 'Divididos e ressarcimentos')}
         ${item('conexao', 'cloud', 'Sua planilha e conexão', S.lastSync ? 'Sincronizado ' + new Date(S.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Ainda não sincronizado')}
         ${item('lixeira', 'trash', 'Lixeira', lix ? `${lix} ${lix === 1 ? 'item' : 'itens'}` : 'Vazia')}
+        ${item('trava', 'lock', 'Trava com a digital', lockCfg() ? 'Ligada' : 'Desligada')}
         ${item('sobre', 'info', 'Sobre o Todo dIA', 'Como funciona · versão ' + VERSION)}
       </div></div>`;
   }
@@ -1073,7 +1139,7 @@
   // ---------- Render ----------
   let pendingRender = false;
   const TABS = { inicio: 'Início', lancamentos: 'Lançamentos', cartoes: 'Cartões', relatorios: 'Relatórios', ajustes: 'Ajustes' };
-  const SUBS = { recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
+  const SUBS = { trava: 'Trava com a digital', recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
   function syncHtml() {
     const n = S.outbox.length;
     if (S.net === 'sync') return '<span class="sync"><i></i>sincronizando</span>';
@@ -1085,6 +1151,7 @@
   function renderSoft() { const el = $('#syncInd'); if (el) el.innerHTML = syncHtml(); }
   function render() {
     const root = $('#app'); if (!root) return;
+    if (S.conn && S.locked) { root.innerHTML = viewLock(); return; }
     if (!S.conn) {
       const active = document.activeElement; const keepId = active && root.contains(active) ? active.id : null;
       root.innerHTML = viewSetup();
@@ -1175,6 +1242,10 @@
       case 'new': S.ui.quick = null; openLanc(); break;
       case 'close-sheet': if (st && st.kind === 'cat' && st.back) { const b = st.back; sheetState = b; closeSheet(true); if (b.kind === 'lanc') renderLanc(); else if (b.kind === 'rec') renderRec(); } else closeSheet(); break;
       case 'flush': S.retryN = 0; sync(); break;
+      case 'unlock': desbloquear(); break;
+      case 'lock-on': ligarTrava(); break;
+      case 'lock-off': desligarTrava(); break;
+      case 'lock-now': trancar(); break;
       case 'go-conexao': S.ui.tab = 'ajustes'; S.ui.sub = 'conexao'; render(); window.scrollTo(0, 0); break;
       case 'install': if (S.installPrompt) { const p = S.installPrompt; S.installPrompt = null; try { p.prompt(); await p.userChoice; } catch { /* ok */ } render(); } break;
       case 'reconnect': S.ui.prevConn = S.conn; S.ui.setupUrl = S.conn ? S.conn.url : ''; S.ui.setupKey = ''; S.ui.setupErr = ''; S.conn = null; render(); break;
@@ -1325,9 +1396,10 @@
     const cache = lsGet(LS.data);
     if (cache && cache.server) { S.server = cache.server; S.lastSync = cache.at || 0; }
     S.outbox = (lsGet(LS.outbox) || []).filter((o) => o && o.t);
+    S.locked = !!(S.conn && lockCfg());
     applyView();
     const h = (location.hash || '').replace('#', '');
-    if (h === 'lancar') { S.ui.tab = 'inicio'; if (S.conn) setTimeout(() => openLanc(), 300); }
+    if (h === 'lancar') { S.ui.tab = 'inicio'; if (S.conn) S.ui.abrirLancar = true; }
     else if (TABS[h]) S.ui.tab = h;
     render();
     document.addEventListener('click', (ev) => {
@@ -1354,14 +1426,20 @@
     // virada do dia: o app sempre sabe que dia é hoje
     const novoDia = () => { const t = hoje(); if (t !== S.today) { S.today = t; S.ui.mes = E.ymOf(t); S.ui.relMes = E.ymOf(t); S.memo = null; return true; } return false; };
     setInterval(() => { if (novoDia() && !$('#sheet')) render(); }, 30000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (novoDia()) render(); if (Date.now() - S.lastSync > 60000 || S.outbox.length) sync(); } });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { S.hiddenAt = Date.now(); return; }
+      if (lockCfg() && !S.locked && S.hiddenAt && Date.now() - S.hiddenAt > 60000) { trancar(); desbloquear(); }
+    });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !S.locked) { if (novoDia()) render(); if (Date.now() - S.lastSync > 60000 || S.outbox.length) sync(); } });
     setInterval(() => { if (!document.hidden && (S.outbox.length || Date.now() - S.lastSync > 300000)) sync(); }, 60000);
     window.addEventListener('error', (e) => console.error('erro', e.message));
     window.addEventListener('unhandledrejection', (e) => console.warn('promessa', e.reason));
     if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch((e) => console.warn('sw', e));
     if (S.conn) sync();
+    if (S.locked) setTimeout(desbloquear, 350);
+    else if (S.ui.abrirLancar) { S.ui.abrirLancar = false; setTimeout(() => openLanc(), 300); }
   }
   // Exposto só para testes automatizados
-  window.__todo = { S, E, D, render, quickSubmit, openLanc, setTab, itens, sync };
+  window.__todo = { S, E, D, render, quickSubmit, openLanc, setTab, itens, sync, trancar };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
