@@ -309,6 +309,15 @@ const Engine = (() => {
     return hist.length ? hist[hist.length - 1].valor : null;
   }
 
+  // Cartão/forma de pagamento de um fixo num mês: exceção do mês > histórico de valores (meioId) > atual
+  function meioRecorrente(rec, ym) {
+    const exc = rec.excecoes && rec.excecoes[ym];
+    if (exc && exc.meioId) return exc.meioId;
+    const hist = (rec.valores || []).filter((v) => v.desde <= ym).sort((a, b) => (a.desde < b.desde ? -1 : 1));
+    const h = hist[hist.length - 1];
+    return (h && h.meioId) || rec.meioId;
+  }
+
   // ---------- Expansão em ocorrências ----------
   // state: { itens: [lanc], recorrentes: [rec], meios: [meio] }
   // retorna ocorrências com competência (comp) no intervalo [de, ate]
@@ -348,10 +357,11 @@ const Engine = (() => {
     }
     for (const rec of state.recorrentes || []) {
       if (!rec || rec.excluido) continue;
-      const meio = meios.get(rec.meioId);
       for (const ym of monthsBetween(de < rec.inicio ? rec.inicio : de, ate)) {
         const valor = valorRecorrente(rec, ym);
         if (!valor) continue;
+        const meioId = meioRecorrente(rec, ym);
+        const meio = meios.get(meioId);
         const data = clampDate(ym, rec.dia || 1);
         const div = rec.tipo === 'despesa' && rec.div >= 2 ? rec.div : 1;
         const minha = Math.round(valor / div);
@@ -360,7 +370,7 @@ const Engine = (() => {
         const desde = (rec.tipo || 'despesa') === 'despesa' ? clampDate(ym, 1) : data;
         out.push({
           key: `rec:${rec.id}:${ym}`, origem: 'rec', refId: rec.id, tipo: rec.tipo || 'despesa',
-          desc: rec.desc, catId: rec.catId, subId: rec.subId, meioId: rec.meioId, data, dataCompra: data,
+          desc: rec.desc, catId: rec.catId, subId: rec.subId, meioId, data, dataCompra: data,
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
           fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
@@ -443,7 +453,7 @@ const Engine = (() => {
     pad, iso, parseISO, dim, todayISO, ymOf, addMonthsYM, clampDate, addDays, weekday, diffDays, monthsBetween,
     fatura, faturaPorRef, faturaStatus, splitParcelas, parseValor, fmtBRL, fmtCompact,
     norm, normKey, ruleKey, parse, resolveMeio, classify, findCat, findSub, matchDicionario, matchRegra,
-    valorRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
+    valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
   };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;

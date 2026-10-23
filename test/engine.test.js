@@ -259,3 +259,13 @@ test('itens com campos nulos (vindos de edição) continuam válidos', () => {
   const o = E.expandir(st, '2026-10', '2026-10', '2026-10-22');
   assert.equal(o.length, 1); assert.equal(o[0].minha, 1000); assert.equal(o[0].recebido, false); assert.equal(o[0].obs, '');
 });
+
+test('fixo que trocou de cartão: outubro no C6, dali em diante no Inter', () => {
+  const rec = { id: 'net', desc: 'Netflix', tipo: 'despesa', catId: 'assinaturas', subId: 'streaming', meioId: 'inter-credito', dia: 10, inicio: '2026-10',
+    valores: [{ desde: '2026-10', valor: 4490, meioId: 'c6-credito' }, { desde: '2026-11', valor: 4490 }] };
+  const occ = E.expandir({ meios: T.meios, itens: [], recorrentes: [rec] }, '2026-10', '2026-12', '2026-10-23');
+  const oct = occ.find((o) => o.comp === '2026-10'), nov = occ.find((o) => o.comp === '2026-11');
+  assert.deepEqual([oct.meioId, oct.fatura, oct.data], ['c6-credito', '2026-11', '2026-10-10']);
+  assert.deepEqual([nov.meioId, nov.fatura], ['inter-credito', '2026-12']);
+  assert.equal(E.meioRecorrente({ ...rec, excecoes: { '2026-12': { meioId: 'boleto' } } }, '2026-12'), 'boleto');
+});

@@ -66,7 +66,7 @@ async def main():
                 await pg.fill('#cKey', KEY)
                 await pg.click('form[data-form=setup] button[type=submit]'); await pg.wait_for_timeout(900)
                 txt = await pg.inner_text('main')
-                ok('Até hoje, em outubro, gastei' in txt and 'R$ 0,00' in txt, 'conectado: "Até hoje, em outubro, gastei R$ 0,00" (começa do zero)')
+                ok('Até hoje, em outubro de 2026, gastei' in txt and 'R$ 0,00' in txt, 'conectado: "Até hoje, em outubro, gastei R$ 0,00" (começa do zero)')
                 await pg.screenshot(path=str(SHOTS / f'{scheme}-01-inicio-zero.png'), full_page=True)
 
                 async def quick(text):

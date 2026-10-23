@@ -367,6 +367,8 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+
 </style>
 </head>
 <body>
@@ -684,6 +686,15 @@ const Engine = (() => {
     return hist.length ? hist[hist.length - 1].valor : null;
   }
 
+  // Cartão/forma de pagamento de um fixo num mês: exceção do mês > histórico de valores (meioId) > atual
+  function meioRecorrente(rec, ym) {
+    const exc = rec.excecoes && rec.excecoes[ym];
+    if (exc && exc.meioId) return exc.meioId;
+    const hist = (rec.valores || []).filter((v) => v.desde <= ym).sort((a, b) => (a.desde < b.desde ? -1 : 1));
+    const h = hist[hist.length - 1];
+    return (h && h.meioId) || rec.meioId;
+  }
+
   // ---------- Expansão em ocorrências ----------
   // state: { itens: [lanc], recorrentes: [rec], meios: [meio] }
   // retorna ocorrências com competência (comp) no intervalo [de, ate]
@@ -723,10 +734,11 @@ const Engine = (() => {
     }
     for (const rec of state.recorrentes || []) {
       if (!rec || rec.excluido) continue;
-      const meio = meios.get(rec.meioId);
       for (const ym of monthsBetween(de < rec.inicio ? rec.inicio : de, ate)) {
         const valor = valorRecorrente(rec, ym);
         if (!valor) continue;
+        const meioId = meioRecorrente(rec, ym);
+        const meio = meios.get(meioId);
         const data = clampDate(ym, rec.dia || 1);
         const div = rec.tipo === 'despesa' && rec.div >= 2 ? rec.div : 1;
         const minha = Math.round(valor / div);
@@ -735,7 +747,7 @@ const Engine = (() => {
         const desde = (rec.tipo || 'despesa') === 'despesa' ? clampDate(ym, 1) : data;
         out.push({
           key: `rec:${rec.id}:${ym}`, origem: 'rec', refId: rec.id, tipo: rec.tipo || 'despesa',
-          desc: rec.desc, catId: rec.catId, subId: rec.subId, meioId: rec.meioId, data, dataCompra: data,
+          desc: rec.desc, catId: rec.catId, subId: rec.subId, meioId, data, dataCompra: data,
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
           fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
@@ -818,7 +830,7 @@ const Engine = (() => {
     pad, iso, parseISO, dim, todayISO, ymOf, addMonthsYM, clampDate, addDays, weekday, diffDays, monthsBetween,
     fatura, faturaPorRef, faturaStatus, splitParcelas, parseValor, fmtBRL, fmtCompact,
     norm, normKey, ruleKey, parse, resolveMeio, classify, findCat, findSub, matchDicionario, matchRegra,
-    valorRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
+    valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
   };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;
@@ -972,7 +984,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1336,6 +1348,9 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         <span class="nm"><i></i>${esc(m.nome)}</span><span class="v num">${brl(tot)}</span>
         <span class="d">Fecha ${dias === 0 ? 'hoje' : dias === 1 ? 'amanhã' : `em ${dias} dias`} · vence ${dataCurta(f.vence)}</span></button>`;
     }).join('');
+    // faturas que vencem neste mês: já se sabe desde o dia 1º quanto vai sair dos cartões
+    const vencem = meiosAtivos().filter((m) => m.tipo === 'credito').map((m) => { const f = E.faturaPorRef(m, ym); return { m, f, tot: E.sum(E.itensFatura(d.state, m.id, ym, t), (o) => o.valor) }; }).filter((x) => x.tot);
+    const totVencem = E.sum(vencem, (x) => x.tot);
     const prox = d.occ.filter((o) => o.fixo && o.data > t && o.data <= E.addDays(t, 7)).sort((x, y) => (x.data < y.data ? -1 : 1));
     const receber = d.occ.filter((o) => (o.tipo === 'despesa' || o.tipo === 'ressarcimento') && o.receber > 0 && !o.recebido && o.comp <= ym && !o.previsto);
     const totRec = E.sum(receber, (o) => o.receber);
@@ -1357,7 +1372,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         <div class="big" style="font-size:38px">1º de ${esc(MESES[+d.inicioAcomp.slice(5) - 1])}</div>
         <div class="small ink2">Faltam <b style="color:var(--ink)">${E.diffDays(t, d.inicioAcomp + '-01')} ${E.diffDays(t, d.inicioAcomp + '-01') === 1 ? 'dia' : 'dias'}</b>. A partir daí, "Até hoje gastei", relatórios e média contam tudo. Até lá, pode ir lançando: tudo entra nas faturas dos cartões.</div>
       </section>` : `<section class="card hero" aria-label="Resumo do mês">
-        <div class="row between"><span class="lead">Até hoje, em ${esc(MESES[+ym.slice(5) - 1])}, gastei</span><button class="small" style="color:var(--accent-ink);font-weight:650" data-act="tab" data-tab="relatorios">Relatórios</button></div>
+        <div class="row between"><span class="lead">Até hoje, em ${esc(MESES[+ym.slice(5) - 1])} de ${ym.slice(0, 4)}, gastei</span><button class="small" style="color:var(--accent-ink);font-weight:650" data-act="tab" data-tab="relatorios">Relatórios</button></div>
         <div class="big num">${esc(a)}<span class="cents">${esc(b)}</span></div>
         <div class="small ink2">Previsão até ${fimMes}: <b class="num" style="color:var(--ink)">${brl(r.gastoReal + r.gastoPrev)}</b>${r.ressarcReal ? ` · já descontados ${brl(r.ressarcReal)} de ressarcimento` : ''}</div>
         ${r.fixos + r.parcelas ? `<div class="small ink2">Já inclui <b class="num" style="color:var(--ink)">${brl(r.fixos + r.parcelas)}</b> de gastos certos do mês (${[r.fixos ? `fixos ${brl(r.fixos)}` : '', r.parcelas ? `parcelas ${brl(r.parcelas)}` : ''].filter(Boolean).join(', ')}), que contam desde o dia 1º.${r.espolio ? ` Espólio: ${brl(r.espolio)}.` : ''}</div>` : r.espolio ? `<div class="small ink2">Espólio: ${brl(r.espolio)}.</div>` : ''}
@@ -1368,6 +1383,8 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
           <div class="kpi"><span>Lançamentos</span><strong>${r.n}</strong></div></div>
       </section>`}
       ${S.installPrompt ? `<button class="card row" data-act="install" style="text-align:left"><span class="mono rec">${ic('download')}</span><span class="grow"><b style="display:block">Instalar o Todo dIA</b><span class="small muted">Vira um ícone na tela inicial, abre em tela cheia</span></span>${ic('right', 'chev')}</button>` : ''}
+      ${totVencem ? `<section class="section"><div class="sec-h"><h2>A pagar em ${esc(MESES[+ym.slice(5) - 1])} de ${ym.slice(0, 4)}</h2><b class="num">${brl(totVencem)}</b></div>
+        <div class="card list" style="padding-block:2px">${vencem.map((x) => { const dv = E.diffDays(t, x.f.vence); return `<button class="li fat" data-act="go-card-ref" data-id="${esc(x.m.id)}" data-ref="${esc(ym)}"><span class="grow"><span class="t"><i class="dot" style="background:${esc(x.m.cor || 'var(--accent)')}"></i>${esc(x.m.nome)}</span><span class="s">vence ${dataCurta(x.f.vence)}/${x.f.vence.slice(2, 4)} · ${dv > 0 ? `em ${dv} ${dv === 1 ? 'dia' : 'dias'}` : dv === 0 ? 'hoje' : 'já venceu'}</span></span><span class="amt">${brl(x.tot)}</span></button>`; }).join('')}</div></section>` : ''}
       ${cards ? `<section class="section"><div class="sec-h"><h2>Faturas abertas</h2><button class="link" data-act="tab" data-tab="cartoes">Ver cartões</button></div><div class="cards-row">${cards}</div></section>` : ''}
       ${totRec ? `<button class="card row" data-act="sub" data-sub="receber" style="text-align:left"><span class="mono rec">${ic('users')}</span><span class="grow"><b style="display:block">A receber da família</b><span class="small muted">${receber.length} ${receber.length === 1 ? 'valor pendente' : 'valores pendentes'} (divididos e ressarcimentos)</span></span><b class="num">${brl(totRec)}</b>${ic('right', 'chev')}</button>` : ''}
       ${prox.length ? `<section class="section"><div class="sec-h"><h2>Próximos 7 dias</h2></div><div class="card list" style="padding-block:4px">${prox.map((o) => occRow(o, { noDim: true })).join('')}</div></section>` : ''}
@@ -1376,7 +1393,9 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
           : `<p class="small muted" style="margin:0">Seus gastos por categoria aparecem aqui assim que você lançar o primeiro.</p>`}</div></section>
       <section class="section"><div class="sec-h"><h2>Últimos lançamentos</h2>${ultimos.length ? '<button class="link" data-act="tab" data-tab="lancamentos">Ver todos</button>' : ''}</div>
         <div class="card list" style="padding-block:4px">${ultimos.length ? ultimos.map((i) => {
-          const o = occByRef.get(i.id + '|' + E.ymOf(i.data)) || [...d.occ].find((x) => x.refId === i.id); return o ? occRow(o, { noDim: true }) : '';
+          // parcelado: mostra a parcela do mês atual (ou a próxima), não a última
+          const doItem = d.occ.filter((x) => x.refId === i.id).sort((x, y) => (x.comp < y.comp ? -1 : 1));
+          const o = occByRef.get(i.id + '|' + ym) || doItem.find((x) => x.comp >= ym) || occByRef.get(i.id + '|' + E.ymOf(i.data)) || doItem[doItem.length - 1]; return o ? occRow(o, { noDim: true }) : '';
         }).join('') : emptyState('Nenhum lançamento ainda', 'Escreva do seu jeito na barra acima, como "açougue 87,50 inter". O app entende o resto.')}</div></section>
     </div>`;
   }
@@ -1430,40 +1449,58 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const cards = meiosAtivos().filter((m) => m.tipo === 'credito');
     if (!cards.length) return `<div class="card">${emptyState('Nenhum cartão de crédito', 'Cadastre seus cartões em Ajustes › Formas de pagamento.', '<button class="btn pri sm" data-act="sub" data-sub="meios">Cadastrar</button>')}</div>`;
     const t = hoje();
-    const m = cards.find((c) => c.id === S.ui.cardId) || cards[0];
-    S.ui.cardId = m.id;
-    const atual = E.fatura(m, t);
-    const ref = S.ui.faturaRef || atual.ref;
-    const f = E.faturaPorRef(m, ref);
-    const st = E.faturaStatus(f, t);
-    const its = E.itensFatura(D().state, m.id, ref, t);
+    const todos = S.ui.cardId === 'todos' && cards.length > 1;
+    const m = todos ? null : cards.find((c) => c.id === S.ui.cardId) || cards[0];
+    S.ui.cardId = todos ? 'todos' : m.id;
+    const sel = todos ? cards : [m];
+    // fatura "atual": a primeira ainda não vencida (no modo somado, a mais antiga entre os cartões)
+    const atual = sel.map((c) => E.fatura(c, t).ref).sort()[0];
+    const ref = S.ui.faturaRef || atual;
+    const porCartao = sel.map((c) => { const f = E.faturaPorRef(c, ref); const its = E.itensFatura(D().state, c.id, ref, t); return { c, f, its, st: E.faturaStatus(f, t), tot: E.sum(its, (o) => o.valor) }; });
+    const its = porCartao.flatMap((x) => x.its);
     const tot = E.sum(its, (o) => o.valor);
     const comp = { compras: E.sum(its.filter((o) => !o.fixo && !o.parcela && o.tipo !== 'ajuste'), (o) => o.valor), parcelas: E.sum(its.filter((o) => o.parcela), (o) => o.valor), fixos: E.sum(its.filter((o) => o.fixo), (o) => o.valor), ajuste: E.sum(its.filter((o) => o.tipo === 'ajuste'), (o) => o.valor) };
-    const stTxt = { aberta: ['acc', 'Aberta'], fechada: ['coin', 'Fechada, a pagar'], vencida: ['', 'Vencida'] }[st];
-    const dias = E.diffDays(t, st === 'aberta' ? f.fecha : f.vence);
-    // próximas 6 faturas
-    const refs = Array.from({ length: 6 }, (_, i) => E.addMonthsYM(atual.ref, i));
-    const futuras = refs.map((r) => E.sum(E.itensFatura(D().state, m.id, r, t), (o) => o.valor));
-    S.charts.fut = { kind: 'col', months: refs, series: [{ name: 'Fatura', color: 'var(--accent)', values: futuras }], sel: ref, act: 'fatura-ref', labels: refs.map(mesCurto) };
+    const refs = Array.from({ length: 6 }, (_, i) => E.addMonthsYM(atual, i));
+    const somaRef = (r) => E.sum(sel, (c) => E.sum(E.itensFatura(D().state, c.id, r, t), (o) => o.valor));
+    S.charts.fut = { kind: 'col', months: refs, series: [{ name: todos ? 'Faturas somadas' : 'Fatura', color: 'var(--accent)', values: refs.map(somaRef) }], sel: ref, act: 'fatura-ref', labels: refs.map(mesCurto) };
     const compRow = (l, v) => v ? `<div class="row between small"><span class="ink2">${l}</span><b class="num">${brl(v)}</b></div>` : '';
-    return `<div class="stack">
-      <div class="chips">${cards.map((c) => `<button class="chip" style="--cc:${esc(c.cor || 'var(--accent)')}" data-act="card" data-id="${esc(c.id)}" aria-pressed="${c.id === m.id}"><i></i>${esc(c.nome)}</button>`).join('')}</div>
-      <div class="monthnav"><button class="icon-btn" data-act="fatura" data-d="-1" aria-label="Fatura anterior">${ic('left')}</button>
-        <strong>Fatura de ${esc(MESES[+ref.slice(5) - 1])}${ref.slice(0, 4) !== t.slice(0, 4) ? ' ' + ref.slice(0, 4) : ''}</strong>
-        <button class="icon-btn" data-act="fatura" data-d="1" aria-label="Próxima fatura">${ic('right')}</button></div>
-      <section class="card hero" style="--cc:${esc(m.cor || 'var(--accent)')}">
-        <div class="row between"><span class="pill ${stTxt[0]}">${stTxt[1]}</span><span class="small muted">${ref === atual.ref ? 'fatura atual' : ref < atual.ref ? 'fatura anterior' : 'fatura futura'}</span></div>
+    const tituloMes = `${MESES[+ref.slice(5) - 1]} de ${ref.slice(0, 4)}`;
+    const quando = ref === atual ? 'fatura atual' : ref < atual ? 'fatura anterior' : 'fatura futura';
+    let hero;
+    if (todos) {
+      hero = `<section class="card hero">
+        <div class="row between"><span class="pill acc">Cartões somados</span><span class="small muted">${quando}</span></div>
+        <div class="big num">${brlParts(tot)[0]}<span class="cents">${brlParts(tot)[1]}</span></div>
+        <div class="stack" style="gap:8px">${porCartao.map((x) => `<button class="row between small" data-act="card" data-id="${esc(x.c.id)}" style="text-align:left;width:100%"><span class="ink2"><i class="dot" style="background:${esc(x.c.cor || 'var(--accent)')}"></i>${esc(x.c.nome)} · vence ${dataCurta(x.f.vence)}${x.st === 'aberta' ? ` · fecha ${dataCurta(x.f.fecha)}` : x.st === 'fechada' ? ' · fechada' : ' · vencida'}</span><b class="num">${brl(x.tot)}</b></button>`).join('')}</div>
+        <div class="stack" style="gap:6px">${compRow('Compras do período', comp.compras)}${compRow('Parcelas', comp.parcelas)}${compRow('Gastos fixos', comp.fixos)}${compRow('Ajuste de valor anterior ao app', comp.ajuste)}</div>
+      </section>`;
+    } else {
+      const { f, st } = porCartao[0];
+      const stTxt = { aberta: ['acc', 'Aberta'], fechada: ['coin', 'Fechada, a pagar'], vencida: ['', 'Vencida'] }[st];
+      const dias = E.diffDays(t, st === 'aberta' ? f.fecha : f.vence);
+      hero = `<section class="card hero" style="--cc:${esc(m.cor || 'var(--accent)')}">
+        <div class="row between"><span class="pill ${stTxt[0]}">${stTxt[1]}</span><span class="small muted">${quando}</span></div>
         <div class="big num">${brlParts(tot)[0]}<span class="cents">${brlParts(tot)[1]}</span></div>
         <div class="row between small"><span class="ink2">Compras de ${dataCurta(f.inicio)} a ${dataCurta(E.addDays(f.fecha, -1))}</span></div>
-        <div class="kpis"><div class="kpi"><span>Fecha</span><strong>${dataCurta(f.fecha)}</strong></div><div class="kpi"><span>Vence</span><strong>${dataCurta(f.vence)}</strong></div>
+        <div class="kpis"><div class="kpi"><span>Fecha</span><strong>${dataCurta(f.fecha)}/${f.fecha.slice(2, 4)}</strong></div><div class="kpi"><span>Vence</span><strong>${dataCurta(f.vence)}/${f.vence.slice(2, 4)}</strong></div>
           <div class="kpi"><span>${st === 'aberta' ? 'Fecha em' : st === 'fechada' ? 'Vence em' : 'Venceu há'}</span><strong>${Math.abs(dias)} ${Math.abs(dias) === 1 ? 'dia' : 'dias'}</strong></div></div>
         <div class="stack" style="gap:6px">${compRow('Compras do período', comp.compras)}${compRow('Parcelas', comp.parcelas)}${compRow('Gastos fixos', comp.fixos)}${compRow('Ajuste de valor anterior ao app', comp.ajuste)}</div>
         <button class="btn sm" data-act="ajuste" data-ref="${esc(ref)}">${ic('wallet')}Ajustar com o valor do banco</button>
-      </section>
-      <section class="section"><div class="sec-h"><h2>Próximas faturas</h2><span class="tiny muted">toque numa barra</span></div>
+      </section>`;
+    }
+    const lista = todos
+      ? porCartao.filter((x) => x.its.length).map((x) => `<div class="day-h"><span>${esc(x.c.nome)} · vence ${dataCurta(x.f.vence)}</span><span class="num">${brl(x.tot)}</span></div><div class="card list" style="padding-block:2px">${x.its.map((o) => faturaRow(o)).join('')}</div>`).join('')
+      : `<div class="card list" style="padding-block:2px">${its.map((o) => faturaRow(o)).join('')}</div>`;
+    return `<div class="stack">
+      <div class="chips">${cards.length > 1 ? `<button class="chip" data-act="card" data-id="todos" aria-pressed="${todos}">${ic('card').replace('<svg', '<svg style="width:15px;height:15px"')}Somados</button>` : ''}${cards.map((c) => `<button class="chip" style="--cc:${esc(c.cor || 'var(--accent)')}" data-act="card" data-id="${esc(c.id)}" aria-pressed="${!todos && c.id === m.id}"><i></i>${esc(c.nome)}</button>`).join('')}</div>
+      <div class="monthnav"><button class="icon-btn" data-act="fatura" data-d="-1" aria-label="Fatura anterior">${ic('left')}</button>
+        <strong>${todos ? 'Faturas' : 'Fatura'} de ${esc(tituloMes)}</strong>
+        <button class="icon-btn" data-act="fatura" data-d="1" aria-label="Próxima fatura">${ic('right')}</button></div>
+      ${hero}
+      <section class="section"><div class="sec-h"><h2>${todos ? 'Próximas faturas, somadas' : 'Próximas faturas'}</h2><span class="tiny muted">toque numa barra</span></div>
         <div class="card"><div class="chart" data-chart="fut" style="height:170px"></div><p class="tiny muted" style="margin:6px 0 0">Já inclui parcelas e gastos fixos programados.</p></div></section>
-      <section class="section"><div class="sec-h"><h2>Itens da fatura</h2><span class="small muted">${its.length}</span></div>
-        <div class="card list" style="padding-block:2px">${its.length ? its.map((o) => faturaRow(o)).join('') : emptyState('Fatura vazia', 'Nenhum lançamento neste cartão para esta fatura.')}</div></section>
+      <section class="section"><div class="sec-h"><h2>Itens ${todos ? 'das faturas' : 'da fatura'}</h2><span class="small muted">${its.length}</span></div>
+        ${its.length ? lista : `<div class="card">${emptyState('Fatura vazia', 'Nenhum lançamento para esta fatura.')}</div>`}</section>
     </div>`;
   }
 
@@ -1965,7 +2002,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         ${p.ok.itens.length ? `<div class="list">${p.ok.itens.map((i) => `<div class="li"><span class="mono">${esc(iniciais(i.desc))}</span><span class="grow"><span class="t" style="display:block">${esc(i.desc)}</span><span class="s" style="display:block">${esc(catNome(i.catId, i.subId))} · ${esc((meioById(i.meioId) || {}).nome || '')}${i.parcelas > 1 ? ` · ${i.parcelas}x de ${brl(E.splitParcelas(i.valor, i.parcelas)[0])}` : ''}</span></span><span class="amt">${brl(i.valor)}</span></div>`).join('')}</div>` : ''}
         ${p.ok.prefs.inicioAcomp ? `<div class="hint">${ic('calendar')}<span>Relatórios e totais passam a contar a partir de ${esc(mesNome(p.ok.prefs.inicioAcomp))}.</span></div>` : ''}
         ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
-        ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : `${esc(k)} = ${esc(v)}`).join(', ')}</span></div>`).join('')}
+        ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : k === 'inicio' ? `começa em ${mesNome(v)}` : k === 'dia' ? `cobrança no dia ${esc(v)}` : k === 'valores' && Array.isArray(v) ? v.map((x) => `${mesNome(x.desde)} em diante: ${brl(x.valor)}${x.meioId ? ` no ${esc((meioById(x.meioId) || {}).nome || x.meioId)}` : ` no ${esc((meioById(f.set.meioId || f.r.meioId) || {}).nome || '')}`}`).join('; ') : `${esc(k)} = ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
         ${p.ok.cats ? `<div class="hint">${ic('tag')}<span>Categorias atualizadas (${p.ok.cats.length} categorias).</span></div>` : ''}
         ${p.ok.recatItens.length + p.ok.recatFixos.length ? `<div class="hint">${ic('tag')}<span>Mudam de categoria: ${[...p.ok.recatItens, ...p.ok.recatFixos].map((x) => esc(x.desc)).join(', ')}.</span></div>` : ''}
@@ -2166,7 +2203,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const ym = ymHoje();
     const r = rec ? clone(rec) : { id: 'R' + Date.now().toString(36), tipo: 'despesa', desc: '', catId: null, subId: null, meioId: meioPadrao(), dia: 1, inicio: ym, fim: null, div: 1, valores: [], excecoes: {}, recebidos: {} };
     const vAtual = rec ? (E.valorRecorrente(r, ym) ?? E.valorRecorrente(r, r.inicio > ym ? r.inicio : ym) ?? (r.valores.slice(-1)[0] || {}).valor ?? 0) : 0;
-    sheetState = { kind: 'rec', r, isEdit: !!rec, valor: vAtual, valorOrig: vAtual, desde: rec ? (r.inicio > ym ? r.inicio : ym) : ym, err: '' };
+    sheetState = { kind: 'rec', r, isEdit: !!rec, valor: vAtual, valorOrig: vAtual, desde: rec ? (r.inicio > ym ? r.inicio : ym) : ym, meioOrig: r.meioId, desdeMeio: rec ? (r.inicio > ym ? r.inicio : ym) : ym, err: '' };
     renderRec();
   }
   function renderRec() {
@@ -2184,6 +2221,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       ${mudou ? `<div class="field"><label for="rDesde">O novo valor vale a partir de</label><input class="inp" type="month" id="rDesde" value="${esc(st.desde)}"><span class="tiny muted">Os meses anteriores continuam com o valor antigo.</span></div>` : ''}
       <div class="field"><span class="lbl">Categoria</span><button class="catbtn" data-act="r-cat"><span class="mono">${r.catId ? esc(iniciais(catSo(r.catId))) : ic('tag')}</span><span class="grow"><b>${sub ? esc(sub.nome) : 'Escolher categoria'}</b><span>${r.catId ? esc(catSo(r.catId)) : ''}</span></span>${ic('right', 'chev')}</button></div>
       <div class="field"><span class="lbl">${isIn ? 'Entra em' : 'Cobrado em'}</span><div class="chips">${meiosOk.map((m) => `<button class="chip" style="--cc:${esc(m.cor || 'var(--muted)')}" data-act="r-meio" data-id="${esc(m.id)}" aria-pressed="${m.id === r.meioId}"><i></i>${esc(m.nome)}</button>`).join('')}</div></div>
+      ${st.isEdit && r.meioId !== st.meioOrig ? `<div class="field"><label for="rMeioDesde">O novo cartão vale a partir de</label><input class="inp" type="month" id="rMeioDesde" value="${esc(st.desdeMeio)}"><span class="tiny muted">Os meses anteriores continuam em ${esc((meioById(st.meioOrig) || {}).nome || 'outro cartão')}, nas faturas em que já caíram.</span></div>` : ''}
       <div class="toggle"><span><b>Dia do mês</b><br><span class="small muted">${isIn ? 'Dia em que entra' : 'Dia da cobrança (define a fatura). O gasto conta desde o dia 1º'}</span></span><span class="stepper"><button data-act="r-dia" data-d="-1" aria-label="Dia anterior">−</button><output>${r.dia}</output><button data-act="r-dia" data-d="1" aria-label="Próximo dia">+</button></span></div>
       ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${r.div > 1 ? `Sua parte ${brl(Math.round(st.valor / r.div))}` : 'Você paga e a família devolve'}</span></span><button class="switch" role="switch" aria-checked="${r.div > 1}" data-act="r-div" aria-label="Dividido"></button></div>
         ${r.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas</span><span class="stepper"><button data-act="r-divn" data-d="-1" aria-label="Menos">−</button><output>${r.div}</output><button data-act="r-divn" data-d="1" aria-label="Mais">+</button></span></div>` : ''}` : ''}
@@ -2202,6 +2240,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     ini.onchange = () => { if (/^\d{4}-\d{2}$/.test(ini.value)) r.inicio = ini.value; };
     fim.onchange = () => { r.fim = /^\d{4}-\d{2}$/.test(fim.value) ? fim.value : null; };
     if (desde) desde.onchange = () => { if (/^\d{4}-\d{2}$/.test(desde.value)) st.desde = desde.value; };
+    const md = $('#rMeioDesde'); if (md) md.onchange = () => { if (/^\d{4}-\d{2}$/.test(md.value)) st.desdeMeio = md.value; };
   }
   async function saveRecForm() {
     const st = sheetState, r = st.r;
@@ -2219,6 +2258,13 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       r.valores = [{ desde: r.inicio, valor: st.valor }, ...(r.valores || []).filter((x) => x.desde > r.inicio)];
     }
     if (r.valores.length && r.valores[0].desde > r.inicio) r.valores[0].desde = r.inicio;
+    // troca de cartão a partir de um mês: os meses anteriores guardam o cartão antigo
+    if (st.isEdit && r.meioId !== st.meioOrig && st.desdeMeio > r.inicio) {
+      const dm = st.desdeMeio, vDm = E.valorRecorrente({ ...r, excecoes: {} }, dm);
+      r.valores = r.valores.map((x) => { const y = { ...x }; if (y.desde < dm) { if (!y.meioId) y.meioId = st.meioOrig; } else delete y.meioId; return y; });
+      if (vDm && !r.valores.some((x) => x.desde === dm)) r.valores.push({ desde: dm, valor: vDm });
+      r.valores.sort((a, b) => (a.desde < b.desde ? -1 : 1));
+    }
     closeSheet();
     if (await saveRec(r)) toast(st.isEdit ? 'Gasto fixo atualizado.' : 'Fixo cadastrado. Já entra na previsão.');
   }
@@ -2571,8 +2617,11 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       case 'go-espolio': S.ui.lancCat = null; S.ui.mes = S.ui.relMes || ymHoje(); S.ui.filtro = 'espolio'; setTab('lancamentos'); break;
       case 'go-cat': S.ui.lancCat = { catId: el.dataset.cat, subId: el.dataset.sub || null }; S.ui.mes = S.ui.tab === 'relatorios' ? S.ui.relMes : ymHoje(); S.ui.filtro = 'tudo'; setTab('lancamentos'); break;
       case 'go-card': S.ui.cardId = el.dataset.id; S.ui.faturaRef = null; setTab('cartoes'); break;
-      case 'card': S.ui.cardId = el.dataset.id; S.ui.faturaRef = null; render(); break;
-      case 'fatura': { const m = meioById(S.ui.cardId); const cur = S.ui.faturaRef || E.fatura(m, hoje()).ref; S.ui.faturaRef = E.addMonthsYM(cur, +el.dataset.d); render(); break; }
+      case 'go-card-ref': S.ui.cardId = el.dataset.id; S.ui.faturaRef = el.dataset.ref; setTab('cartoes'); break;
+      case 'card': { // troca de cartão sem sair do mês que está sendo visto
+        if (!S.ui.faturaRef) { const cs = meiosAtivos().filter((x) => x.tipo === 'credito'); const sel = S.ui.cardId === 'todos' ? cs : cs.filter((x) => x.id === S.ui.cardId); if (sel.length) S.ui.faturaRef = sel.map((x) => E.fatura(x, hoje()).ref).sort()[0]; }
+        S.ui.cardId = el.dataset.id; render(); break; }
+      case 'fatura': { const cs = meiosAtivos().filter((x) => x.tipo === 'credito'); const sel = S.ui.cardId === 'todos' ? cs : cs.filter((x) => x.id === S.ui.cardId); const cur = S.ui.faturaRef || sel.map((x) => E.fatura(x, hoje()).ref).sort()[0]; S.ui.faturaRef = E.addMonthsYM(cur, +el.dataset.d); render(); break; }
       case 'fatura-ref': { const i = el.dataset.hit; S.ui.faturaRef = el.dataset.ym; render(); const r = document.querySelector(`[data-chart="fut"] [data-hit="${i}"]`); if (r) showTip(r); break; }
       case 'ajuste': openAjuste(el.dataset.ref); break;
       case 'aj-save': saveAjuste(); break;
