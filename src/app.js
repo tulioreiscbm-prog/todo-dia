@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.1.2';
+  const VERSION = '2.2.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -528,6 +528,7 @@
     const catOpts = `<select class="inp" id="relCat" style="padding:8px 34px 8px 12px;font-size:14px;width:auto;max-width:100%"><option value="">Todas as categorias</option>${categorias().filter((c) => (c.tipo || 'despesa') === 'despesa').map((c) => `<option value="${esc(c.id)}" ${catSel === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select>`;
     const pm = primeiroMesMedia();
     return `<div class="stack">
+      <button class="card row" data-act="rp-open" style="text-align:left"><span class="mono rec">${ic('download')}</span><span class="grow"><b style="display:block">Relatório completo em PDF</b><span class="small muted">Cronologia, categorias, dias da semana, fixos, parcelas e Airbnb</span></span>${ic('right', 'chev')}</button>
       <div class="seg" role="group" aria-label="Período">${seg('mes', 'Mês')}${seg('3m', '3 meses')}${seg('6m', '6 meses')}${seg('12m', '12 meses')}</div>
       ${monthNav('relmes', ate)}
       ${totRess ? `<p class="tiny muted" style="margin:0">Gastos já descontam ${brl(totRess)} de ressarcimentos (o gráfico de categorias mostra os valores cheios da sua parte: ${brl(totBruto)}).</p>` : ''}
@@ -586,6 +587,7 @@
     if (sub === 'lixeira') return viewLixeira();
     if (sub === 'sobre') return viewSobre();
     if (sub === 'trava') return viewTrava();
+    if (sub === 'importar') return viewImportar();
     if (sub === 'receber') return viewReceber();
     const totFix = E.sum(S.recorrentes.filter((r) => r.tipo !== 'receita'), (r) => E.valorRecorrente(r, ymHoje()) || E.valorRecorrente(r, E.addMonthsYM(ymHoje(), 1)) || 0);
     const item = (k, icn, t, s) => `<button class="li" data-act="sub" data-sub="${k}"><span class="mono">${ic(icn)}</span><span class="grow"><span class="t" style="display:block">${t}</span><span class="s" style="display:block">${s}</span></span>${ic('right', 'chev')}</button>`;
@@ -600,6 +602,7 @@
       <div class="card list" style="padding-block:2px">
         ${item('receber', 'users', 'A receber da família', 'Divididos e ressarcimentos')}
         ${item('conexao', 'cloud', 'Sua planilha e conexão', S.lastSync ? 'Sincronizado ' + new Date(S.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Ainda não sincronizado')}
+        ${item('importar', 'download', 'Importar lançamentos', 'Cole um bloco preparado pelo Claude')}
         ${item('lixeira', 'trash', 'Lixeira', lix ? `${lix} ${lix === 1 ? 'item' : 'itens'}` : 'Vazia')}
         ${item('trava', 'lock', 'Trava com a digital', lockCfg() ? 'Ligada' : 'Desligada')}
         ${item('sobre', 'info', 'Sobre o Todo dIA', 'Como funciona · versão ' + VERSION)}
@@ -701,6 +704,203 @@
         <p style="margin:0"><b style="color:var(--ink)">Média.</b> A linha de média aparece depois de dois meses completos lançados e usa até os últimos 12 meses.</p>
         <p style="margin:0"><b style="color:var(--ink)">Seus dados.</b> Ficam numa planilha Google sua. O site só tem o programa; sem a sua chave, ninguém vê nada.</p>
       </div></div>`;
+  }
+
+  // ---------- Relatório completo (para salvar em PDF) ----------
+  const DIAS_SEM = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  function reportData(per) {
+    const d = D(), t = hoje(), ymT = E.ymOf(t);
+    const ativos = d.its.filter((i) => !i.excluido);
+    let primeiro = d.inicioUso ? E.ymOf(d.inicioUso) : ymT;
+    for (const i of ativos) if (E.ymOf(i.data) < primeiro) primeiro = E.ymOf(i.data);
+    const n = { '3m': 3, '6m': 6, '12m': 12 }[per];
+    let de = n ? E.addMonthsYM(ymT, -(n - 1)) : primeiro;
+    if (de < primeiro) de = primeiro;
+    const ate = ymT;
+    const meses = E.monthsBetween(de, ate);
+    const occ = d.occ.filter((o) => o.comp >= de && o.comp <= ate && !o.previsto);
+    const g = occ.filter((o) => o.tipo === 'despesa');
+    const avulsos = g.filter((o) => !o.fixo && !o.parcela);
+    const rendas = occ.filter((o) => o.tipo === 'receita');
+    const ress = occ.filter((o) => o.tipo === 'ressarcimento');
+    const bruto = E.sum(g, (o) => o.minha), totRess = E.sum(ress, (o) => o.valor), liquido = bruto - totRess;
+    const renda = E.sum(rendas, (o) => o.valor);
+    const porMes = meses.map((ym) => {
+      const m = occ.filter((o) => o.comp === ym);
+      return { ym, gasto: Math.max(0, E.sum(m, E.liquido)), renda: E.sum(m.filter((o) => o.tipo === 'receita'), (o) => o.valor),
+        fixos: E.sum(m.filter((o) => o.tipo === 'despesa' && o.fixo), (o) => o.minha), parcelas: E.sum(m.filter((o) => o.tipo === 'despesa' && o.parcela), (o) => o.minha),
+        avulsos: E.sum(m.filter((o) => o.tipo === 'despesa' && !o.fixo && !o.parcela), (o) => o.minha), n: m.filter((o) => o.origem === 'lanc').length };
+    });
+    const cats = E.porCategoria(g, categorias());
+    const semana = Array.from({ length: 7 }, (_, i) => ({ dia: i, total: 0, n: 0 }));
+    for (const o of avulsos) { const w = E.weekday(o.data); semana[w].total += o.minha; semana[w].n++; }
+    const faixas = [{ nome: 'Dias 1 a 10', total: 0 }, { nome: 'Dias 11 a 20', total: 0 }, { nome: 'Dias 21 ao fim', total: 0 }];
+    for (const o of avulsos) { const dd = E.parseISO(o.data).d; faixas[dd <= 10 ? 0 : dd <= 20 ? 1 : 2].total += o.minha; }
+    const porDia = new Map(); for (const o of avulsos) porDia.set(o.data, (porDia.get(o.data) || 0) + o.minha);
+    const datas = occ.filter((o) => o.origem === 'lanc').map((o) => o.data).sort();
+    let inicioDias = datas[0] || t; if (inicioDias < de + '-01') inicioDias = de + '-01';
+    const totalDias = Math.max(1, E.diffDays(inicioDias, t) + 1);
+    const diasComGasto = porDia.size;
+    const topDia = [...porDia.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+    const lojas = new Map();
+    for (const o of avulsos) { const k = E.normKey(o.desc); if (!k) continue; const x = lojas.get(k) || { nome: o.desc, n: 0, total: 0 }; x.n++; x.total += o.minha; lojas.set(k, x); }
+    const freq = [...lojas.values()].sort((a, b) => b.n - a.n || b.total - a.total).slice(0, 8);
+    const top = avulsos.slice().sort((a, b) => b.minha - a.minha).slice(0, 10);
+    const meiosT = new Map(); for (const o of g) meiosT.set(o.meioId, (meiosT.get(o.meioId) || 0) + o.valor);
+    // fixos e parcelados (olhando para frente)
+    const fixosAtivos = S.recorrentes.filter((r) => (!r.fim || r.fim >= ymT)).map((r) => ({ r, v: E.valorRecorrente(r, ymT) ?? E.valorRecorrente(r, E.addMonthsYM(ymT, 1)) ?? 0 })).filter((x) => x.v);
+    const fixDesp = fixosAtivos.filter((x) => (x.r.tipo || 'despesa') === 'despesa');
+    const fixoMes = E.sum(fixDesp, (x) => Math.round(x.v / (x.r.div || 1)));
+    const futuras = d.occ.filter((o) => o.tipo === 'despesa' && o.parcela && o.comp > ymT);
+    const parcAtivas = new Map();
+    for (const o of d.occ.filter((o) => o.tipo === 'despesa' && o.parcela && o.comp >= ymT)) {
+      const x = parcAtivas.get(o.refId) || { desc: o.desc, meioId: o.meioId, valor: o.valor, total: o.parcela[1], restantes: 0, fim: o.comp, falta: 0 };
+      x.restantes++; x.falta += o.valor; if (o.comp > x.fim) x.fim = o.comp; parcAtivas.set(o.refId, x);
+    }
+    const comprometido = E.monthsBetween(E.addMonthsYM(ymT, 1), E.addMonthsYM(ymT, 6)).map((ym) => ({ ym,
+      parcelas: E.sum(futuras.filter((o) => o.comp === ym), (o) => o.minha),
+      fixos: E.sum(d.occ.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.fixo), (o) => o.minha) }));
+    // divididos
+    const div = g.filter((o) => o.div > 1);
+    const recPend = E.sum(occ.filter((o) => (o.tipo === 'despesa' || o.tipo === 'ressarcimento') && o.receber > 0 && !o.recebido), (o) => o.receber);
+    // entradas e Airbnb
+    const fontes = new Map(); for (const o of rendas) { const k = o.subId || 'outras'; fontes.set(k, (fontes.get(k) || 0) + o.valor); }
+    const isAir = (o) => o.tipo === 'receita' && (o.subId === 'airbnb' || /airbnb/i.test(o.desc));
+    const air = rendas.filter(isAir);
+    const airMes = meses.map((ym) => ({ ym, v: E.sum(air.filter((o) => o.comp === ym), (o) => o.valor), n: air.filter((o) => o.comp === ym).length }));
+    const airCustos = E.sum(g.filter((o) => o.catId === 'imoveis' && o.subId === 'airbnb'), (o) => o.minha);
+    const airTotal = E.sum(air, (o) => o.valor);
+    const airMelhor = airMes.slice().sort((a, b) => b.v - a.v)[0];
+    const mesesCompletosPer = meses.filter((ym) => d.completos.includes(ym));
+    return { de, ate, meses, occ, g, avulsos, bruto, totRess, liquido, renda, porMes, cats, semana, faixas, porDia, totalDias, diasComGasto, topDia,
+      freq, top, meiosT, fixosAtivos, fixoMes, parcAtivas: [...parcAtivas.values()].sort((a, b) => (a.fim < b.fim ? 1 : -1)), comprometido, div, recPend,
+      fontes, air, airMes, airCustos, airTotal, airMelhor, mesesCompletosPer, media: d.media, t };
+  }
+  function insights(R) {
+    const out = [];
+    const nm = R.meses.length;
+    if (!R.g.length && !R.renda) return ['Ainda não há lançamentos no período. Lance seus gastos por alguns dias e gere o relatório de novo: as conclusões aparecem sozinhas.'];
+    if (R.cats[0]) out.push(`<b>${esc(catSo(R.cats[0].catId))}</b> é onde mais vai o seu dinheiro: ${pct(R.cats[0].total, R.bruto)}% dos gastos (${brl(R.cats[0].total)}).${R.cats[1] ? ` Em seguida vem ${esc(catSo(R.cats[1].catId))}, com ${pct(R.cats[1].total, R.bruto)}%.` : ''}`);
+    const fixosP = E.sum(R.g.filter((o) => o.fixo), (o) => o.minha), parcP = E.sum(R.g.filter((o) => o.parcela), (o) => o.minha);
+    if (R.bruto) out.push(`${pct(fixosP + parcP, R.bruto)}% dos seus gastos já estavam "contratados" antes do mês começar (fixos ${brl(fixosP)} e parcelas ${brl(parcP)}). Os outros ${pct(R.bruto - fixosP - parcP, R.bruto)}% são escolhas do dia a dia.`);
+    const sem = R.semana.slice().sort((a, b) => b.total - a.total);
+    if (sem[0] && sem[0].total) out.push(`Nos gastos do dia a dia, <b>${DIAS_SEM[sem[0].dia].toLowerCase()}${sem[0].dia === 0 || sem[0].dia === 6 ? '' : '-feira'}</b> é o dia que mais pesa: ${pct(sem[0].total, E.sum(R.semana, (x) => x.total))}% do total, em ${sem[0].n} ${sem[0].n === 1 ? 'compra' : 'compras'}.`);
+    const fx = R.faixas.slice().sort((a, b) => b.total - a.total)[0];
+    if (fx && fx.total) out.push(`Você gasta mais nos <b>${fx.nome.toLowerCase()}</b> de cada mês (${pct(fx.total, E.sum(R.faixas, (x) => x.total))}% dos gastos avulsos).`);
+    if (R.avulsos.length) out.push(`Foram ${R.avulsos.length} compras avulsas, com ticket médio de ${brl(Math.round(E.sum(R.avulsos, (o) => o.minha) / R.avulsos.length))}. Você teve gasto em ${R.diasComGasto} de ${R.totalDias} dias${R.totalDias - R.diasComGasto > 0 ? ` (${R.totalDias - R.diasComGasto} dias sem gastar nada)` : ''}.`);
+    if (R.freq[0] && R.freq[0].n > 1) out.push(`O lugar onde você mais volta é <b>${esc(R.freq[0].nome)}</b>: ${R.freq[0].n} vezes, somando ${brl(R.freq[0].total)}.`);
+    if (R.top[0]) out.push(`O maior gasto avulso foi <b>${esc(R.top[0].desc)}</b>, ${brl(R.top[0].minha)} em ${dataCurta(R.top[0].data)}.`);
+    if (R.fixoMes) out.push(`Seus fixos somam ${brl(R.fixoMes)} por mês (sua parte), o equivalente a ${brl(R.fixoMes * 12)} por ano.${R.renda && nm ? ` Isso compromete ${pct(R.fixoMes * nm, R.renda)}% das suas entradas.` : ''}`);
+    if (R.parcAtivas.length) { const falta = E.sum(R.parcAtivas, (x) => x.falta); const fim = R.parcAtivas.reduce((m, x) => (x.fim > m ? x.fim : m), ''); out.push(`Você tem ${R.parcAtivas.length} ${R.parcAtivas.length === 1 ? 'compra parcelada ativa' : 'compras parceladas ativas'}, com ${brl(falta)} ainda a pagar. A última parcela cai em ${mesNome(fim)}.`); }
+    if (R.renda) out.push(`Entradas de ${brl(R.renda)} contra ${brl(R.liquido)} gastos: ${R.renda >= R.liquido ? `sobraram ${brl(R.renda - R.liquido)} (${pct(R.renda - R.liquido, R.renda)}% do que entrou)` : `faltaram ${brl(R.liquido - R.renda)}`}.`);
+    if (R.airTotal) out.push(`O Airbnb trouxe <b>${brl(R.airTotal)}</b> (${pct(R.airTotal, R.renda)}% das entradas)${R.airCustos ? `, com ${brl(R.airCustos)} de custos lançados: resultado de ${brl(R.airTotal - R.airCustos)}` : ''}.`);
+    if (R.recPend) out.push(`Há ${brl(R.recPend)} a receber da família (divididos e ressarcimentos ainda não marcados como recebidos).`);
+    if (R.media != null) { const ult = R.porMes[R.porMes.length - 2]; if (ult) { const dif = pct(ult.gasto - R.media, R.media); out.push(`Em ${mesNome(ult.ym)} você gastou ${brl(ult.gasto)}, ${Math.abs(dif)}% ${dif >= 0 ? 'acima' : 'abaixo'} da sua média (${brl(R.media)}).`); } }
+    return out;
+  }
+  const hb = (rows, opts = {}) => {
+    const max = Math.max(1, ...rows.map((r) => r.v));
+    return rows.map((r) => `<div class="rp-hb"><div class="rp-hb-t"><span>${r.l}</span><b>${opts.fmt ? opts.fmt(r.v) : brl(r.v)}${r.extra ? ` <small>${r.extra}</small>` : ''}</b></div><div class="rp-hb-tr"><i style="width:${Math.max(1, (r.v / max) * 100)}%;${opts.cor ? `background:${opts.cor}` : ''}"></i></div></div>`).join('');
+  };
+  function viewReport() {
+    const per = S.ui.report.per || 'tudo';
+    const R = reportData(per);
+    S.charts.rp1 = { W: 680, H: 250, kind: 'group', months: R.meses, series: [{ name: 'Entradas', color: 'var(--s2)', values: R.porMes.map((x) => x.renda) }, { name: 'Gastos', color: 'var(--accent)', values: R.porMes.map((x) => x.gasto) }], sel: null, labels: R.meses.map(mesCurto) };
+    S.charts.rp2 = { W: 680, H: 250, kind: 'stack', months: R.meses, series: [{ name: 'Fixos', color: 'var(--accent)', values: R.porMes.map((x) => x.fixos) }, { name: 'Parcelas', color: 'var(--coin)', values: R.porMes.map((x) => x.parcelas) }, { name: 'Dia a dia', color: 'var(--s2)', values: R.porMes.map((x) => x.avulsos) }], sel: null, labels: R.meses.map(mesCurto) };
+    S.charts.rp3 = { W: 680, H: 200, kind: 'col', months: R.meses, series: [{ name: 'Airbnb', color: 'var(--s2)', values: R.airMes.map((x) => x.v) }], sel: null, labels: R.meses.map(mesCurto) };
+    const seg = (k, l) => `<button data-act="rp-per" data-p="${k}" aria-pressed="${per === k}">${l}</button>`;
+    const geradoEm = new Date().toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const perTxt = R.de === R.ate ? cap(mesNome(R.de)) : `${cap(mesNome(R.de))} a ${mesNome(R.ate)}`;
+    const ins = insights(R);
+    const semTot = E.sum(R.semana, (x) => x.total);
+    const tabelaMes = `<table class="t rp-t"><thead><tr><th>Mês</th><th>Gastos</th><th>Fixos</th><th>Parcelas</th><th>Dia a dia</th><th>Entradas</th><th>Saldo</th></tr></thead><tbody>${R.porMes.map((x) => `<tr><td>${mesCurto(x.ym)}</td><td>${brl(x.gasto)}</td><td>${brl(x.fixos)}</td><td>${brl(x.parcelas)}</td><td>${brl(x.avulsos)}</td><td>${brl(x.renda)}</td><td>${brl(x.renda - x.gasto)}</td></tr>`).join('')}</tbody></table>`;
+    const catsHtml = R.cats.map((c) => `<div class="rp-cat">${hb([{ l: `<b>${esc(catSo(c.catId))}</b>`, v: c.total, extra: `${pct(c.total, R.bruto)}%` }])}
+      <div class="rp-subs">${c.subs.slice(0, 6).map((s) => `<span>${esc(subSo(c.catId, s.subId) || 'Outros')} <b>${brl(s.total)}</b></span>`).join('')}</div></div>`).join('');
+    const fontesNomes = { salario: 'Salário', aluguel: 'Aluguel', airbnb: 'Airbnb', outras: 'Outras' };
+    return `<div class="report">
+      <div class="rp-bar noprint wrap"><button class="icon-btn" data-act="rp-close" aria-label="Voltar">${ic('left')}</button><b class="grow">Relatório completo</b><button class="btn pri sm" data-act="rp-print">${ic('download')}Salvar PDF</button></div>
+      <div class="rp-per noprint wrap"><div class="seg" role="group" aria-label="Período do relatório">${seg('tudo', 'Desde o início')}${seg('3m', '3 meses')}${seg('6m', '6 meses')}${seg('12m', '12 meses')}</div>
+        <p class="tiny muted" style="margin:6px 0 0">No Android: "Salvar PDF" abre a tela de impressão. Escolha <b>Salvar como PDF</b> como impressora.</p></div>
+      <article class="rp-doc">
+        <header class="rp-capa"><div class="row">${LOGO('rp-logo')}<div><div class="word">Todo d<b>IA</b></div><div class="small muted">Relatório do seu perfil de gastos</div></div></div>
+          <h1>${esc(perTxt)}</h1><p class="small muted">Gerado em ${esc(geradoEm)} · valores da sua parte, já descontados os ressarcimentos</p></header>
+        <section class="rp-sec"><h2>Resumo</h2><div class="rp-kpis">
+          <div><span>Gastos (sua parte)</span><b>${brl(R.liquido)}</b></div><div><span>Entradas</span><b>${brl(R.renda)}</b></div>
+          <div><span>Saldo do período</span><b class="${R.renda - R.liquido >= 0 ? 'pos' : 'neg'}">${brl(R.renda - R.liquido)}</b></div>
+          <div><span>Média por mês</span><b>${brl(Math.round(R.liquido / Math.max(1, R.meses.length)))}</b></div>
+          <div><span>Lançamentos</span><b>${R.porMes.reduce((s, x) => s + x.n, 0)}</b></div><div><span>Gasto médio por dia</span><b>${brl(Math.round(E.sum(R.avulsos, (o) => o.minha) / R.totalDias))}</b></div></div></section>
+        <section class="rp-sec"><h2>O que os números dizem</h2><ul class="rp-ins">${ins.map((x) => `<li>${x}</li>`).join('')}</ul></section>
+        <section class="rp-sec"><h2>Cronologia: entradas e gastos por mês</h2><div class="chart" data-chart="rp1" style="height:210px"></div>
+          <div class="legend"><span><i style="background:var(--s2)"></i>Entradas</span><span><i style="background:var(--accent)"></i>Gastos</span></div>
+          <h3>De onde vem cada gasto do mês</h3><div class="chart" data-chart="rp2" style="height:210px"></div>
+          <div class="legend"><span><i style="background:var(--accent)"></i>Fixos</span><span><i style="background:var(--coin)"></i>Parcelas</span><span><i style="background:var(--s2)"></i>Dia a dia</span></div>
+          <div class="table-wrap">${tabelaMes}</div></section>
+        <section class="rp-sec"><h2>Categorias</h2>${catsHtml || '<p class="small muted">Sem gastos no período.</p>'}</section>
+        <section class="rp-sec rp-2col"><div><h2>Dia da semana</h2><p class="tiny muted">Só gastos do dia a dia (fixos e parcelas ficam de fora).</p>${hb(R.semana.map((x) => ({ l: DIAS_SEM[x.dia], v: x.total, extra: `${pct(x.total, semTot)}%` })))}</div>
+          <div><h2>Momento do mês</h2><p class="tiny muted">Em que parte do mês você mais gasta no dia a dia.</p>${hb(R.faixas.map((x) => ({ l: x.nome, v: x.total })), { cor: 'var(--coin)' })}
+          ${R.topDia ? `<p class="small" style="margin-top:12px">Dia mais caro: <b>${esc(dataLonga(R.topDia[0]))}</b>, ${brl(R.topDia[1])}.</p>` : ''}</div></section>
+        <section class="rp-sec rp-2col"><div><h2>Onde você mais volta</h2>${R.freq.length ? `<table class="t rp-t"><thead><tr><th>Lugar</th><th>Vezes</th><th>Total</th></tr></thead><tbody>${R.freq.map((x) => `<tr><td>${esc(x.nome)}</td><td>${x.n}</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Sem dados.</p>'}</div>
+          <div><h2>Maiores gastos do dia a dia</h2>${R.top.length ? `<table class="t rp-t"><thead><tr><th>Gasto</th><th>Data</th><th>Valor</th></tr></thead><tbody>${R.top.map((o) => `<tr><td>${esc(o.desc)}</td><td>${dataCurta(o.data)}</td><td>${brl(o.minha)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Sem dados.</p>'}</div></section>
+        <section class="rp-sec"><h2>Gastos fixos</h2><p class="small ink2">${R.fixosAtivos.length} fixos ativos. Sua parte: <b>${brl(R.fixoMes)}</b> por mês, <b>${brl(R.fixoMes * 12)}</b> por ano.</p>
+          <table class="t rp-t"><thead><tr><th>Fixo</th><th>Forma</th><th>Mensal</th><th>Sua parte</th><th>Até</th></tr></thead><tbody>${R.fixosAtivos.map(({ r, v }) => `<tr><td>${esc(r.desc)}${r.tipo === 'ressarcimento' ? ' <small>(ressarcimento)</small>' : r.tipo === 'receita' ? ' <small>(entrada)</small>' : ''}</td><td>${esc((meioById(r.meioId) || {}).nome || '')}</td><td>${brl(v)}</td><td>${r.tipo === 'despesa' ? brl(Math.round(v / (r.div || 1))) : '—'}</td><td>${r.fim ? mesCurto(r.fim) : 'sem fim'}</td></tr>`).join('')}</tbody></table></section>
+        <section class="rp-sec"><h2>Compras parceladas e compromisso futuro</h2>
+          ${R.parcAtivas.length ? `<table class="t rp-t"><thead><tr><th>Compra</th><th>Cartão</th><th>Parcela</th><th>Faltam</th><th>A pagar</th><th>Última</th></tr></thead><tbody>${R.parcAtivas.map((x) => `<tr><td>${esc(x.desc)}</td><td>${esc((meioById(x.meioId) || {}).nome || '')}</td><td>${brl(x.valor)}</td><td>${x.restantes}</td><td>${brl(x.falta)}</td><td>${mesCurto(x.fim)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Nenhuma compra parcelada ativa.</p>'}
+          <h3>Próximos 6 meses já comprometidos (sua parte)</h3>${hb(R.comprometido.map((x) => ({ l: cap(mesNome(x.ym)), v: x.fixos + x.parcelas, extra: x.parcelas ? `parcelas ${brl(x.parcelas)}` : '' })))}</section>
+        <section class="rp-sec rp-2col"><div><h2>Formas de pagamento</h2>${hb([...R.meiosT.entries()].sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ l: esc((meioById(id) || { nome: 'Outro' }).nome), v, extra: `${pct(v, E.sum([...R.meiosT.values()]))}%` })), { cor: 'var(--s2)' })}</div>
+          <div><h2>Família e divididos</h2><p class="small ink2">Você pagou ${brl(E.sum(R.div, (o) => o.valor))} em gastos divididos; a sua parte foi ${brl(E.sum(R.div, (o) => o.minha))}.</p>
+          <p class="small ink2">Ressarcimentos no período: ${brl(R.totRess)}.</p><p class="small ink2">Ainda a receber: <b>${brl(R.recPend)}</b>.</p></div></section>
+        <section class="rp-sec"><h2>Entradas</h2>${R.renda ? hb([...R.fontes.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ l: fontesNomes[k] || esc(subSo('renda', k) || k), v, extra: `${pct(v, R.renda)}%` })), { cor: 'var(--s2)' }) : '<p class="small muted">Nenhuma entrada lançada no período.</p>'}</section>
+        <section class="rp-sec rp-air"><h2>Airbnb: a sua outra fonte de renda</h2>
+          ${R.airTotal ? `<div class="rp-kpis"><div><span>Recebido</span><b>${brl(R.airTotal)}</b></div><div><span>Recebimentos</span><b>${R.air.length}</b></div>
+            <div><span>Média por recebimento</span><b>${brl(Math.round(R.airTotal / R.air.length))}</b></div><div><span>Média por mês</span><b>${brl(Math.round(R.airTotal / Math.max(1, R.meses.length)))}</b></div>
+            <div><span>Custos lançados</span><b>${brl(R.airCustos)}</b></div><div><span>Resultado</span><b class="${R.airTotal - R.airCustos >= 0 ? 'pos' : 'neg'}">${brl(R.airTotal - R.airCustos)}</b></div></div>
+            <div class="chart" data-chart="rp3" style="height:180px"></div>
+            <p class="small ink2">${R.airMelhor && R.airMelhor.v ? `Melhor mês: <b>${cap(mesNome(R.airMelhor.ym))}</b>, com ${brl(R.airMelhor.v)}. ` : ''}O Airbnb representou ${pct(R.airTotal, R.renda)}% de tudo o que entrou${R.liquido ? ` e cobriria ${pct(R.airTotal, R.liquido)}% dos seus gastos do período` : ''}.</p>
+            <p class="tiny muted">Para o resultado ficar fiel, lance os custos do imóvel (faxina, enxoval, taxas) em Imóveis de renda › Custos do Airbnb.</p>`
+          : '<p class="small muted">Nenhum recebimento do Airbnb lançado no período. Lance como entrada (ex.: "recebi airbnb 850") e ele aparece aqui com médias e melhor mês.</p>'}</section>
+        <footer class="rp-foot">Todo dIA · versão ${VERSION} · ${esc(geradoEm)}</footer>
+      </article></div>`;
+  }
+
+  // ---------- Importar lançamentos (bloco preparado pelo Claude) ----------
+  function lerImportacao(txt) {
+    const m = String(txt || '').replace(/\s+/g, '').match(/TODODIA1:([A-Za-z0-9_-]+)/);
+    if (!m) throw new Error('Não encontrei o bloco. Ele começa com TODODIA1:');
+    let obj;
+    try { const bytes = unb64u(m[1]); obj = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new Error('O bloco está incompleto. Copie de novo, do começo ao fim.'); }
+    const itens = (obj.itens || []).map((x, i) => {
+      const it = { id: String(x.id || uid('I')), tipo: x.tipo || 'despesa', desc: String(x.desc || '').slice(0, 120), valor: Math.round(Number(x.valor)), data: String(x.data || ''),
+        meioId: String(x.meioId || ''), catId: x.catId || 'outros', subId: x.subId || 'indefinido', parcelas: Math.max(1, Math.min(48, Math.round(Number(x.parcelas) || 1))), div: Math.max(1, Math.round(Number(x.div) || 1)), obs: String(x.obs || ''), fonteCat: 'importado' };
+      if (!/^[A-Za-z0-9_-]{4,60}$/.test(it.id)) throw new Error(`Item ${i + 1}: identificador inválido.`);
+      if (!(it.valor > 0)) throw new Error(`Item ${i + 1} (${it.desc}): valor inválido.`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(it.data)) throw new Error(`Item ${i + 1} (${it.desc}): data inválida.`);
+      if (!meioById(it.meioId)) throw new Error(`Item ${i + 1} (${it.desc}): forma de pagamento "${it.meioId}" não existe no seu app.`);
+      if (!E.findSub(categorias(), it.catId, it.subId)) { it.catId = 'outros'; it.subId = 'indefinido'; }
+      return it;
+    });
+    const fixos = (obj.fixos || []).map((f) => {
+      const r = S.recorrentes.find((x) => x.id === f.id);
+      if (!r) throw new Error(`Fixo "${f.id}" não existe no seu app.`);
+      return { r, set: f.set || {}, excluir: !!f.excluir };
+    });
+    return { itens, fixos, titulo: obj.titulo || 'Importação' };
+  }
+  function viewImportar() {
+    const p = S.ui.imp;
+    let prev = '';
+    if (p && p.ok) {
+      const tot = E.sum(p.ok.itens, (i) => i.valor);
+      prev = `<div class="card stack" style="gap:8px"><b>${esc(p.ok.titulo)}</b>
+        ${p.ok.itens.length ? `<div class="list">${p.ok.itens.map((i) => `<div class="li"><span class="mono">${esc(iniciais(i.desc))}</span><span class="grow"><span class="t" style="display:block">${esc(i.desc)}</span><span class="s" style="display:block">${esc(catNome(i.catId, i.subId))} · ${esc((meioById(i.meioId) || {}).nome || '')}${i.parcelas > 1 ? ` · ${i.parcelas}x de ${brl(E.splitParcelas(i.valor, i.parcelas)[0])}` : ''}</span></span><span class="amt">${brl(i.valor)}</span></div>`).join('')}</div>` : ''}
+        ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : `${esc(k)} = ${esc(v)}`).join(', ')}</span></div>`).join('')}
+        <div class="row between small"><span class="ink2">${p.ok.itens.length} lançamentos</span><b>${brl(tot)}</b></div>
+        <button class="btn pri" data-act="imp-ok">${ic('check')}Importar</button></div>`;
+    }
+    return `<div class="stack"><p class="small ink2" style="margin:0">Cole aqui o bloco que o Claude preparou para você (começa com <b>TODODIA1:</b>). O app mostra tudo antes de gravar. Importar o mesmo bloco duas vezes não duplica nada.</p>
+      <textarea class="inp" id="impTxt" rows="5" placeholder="TODODIA1:..." spellcheck="false" style="font-family:ui-monospace,monospace;font-size:13px">${esc((p && p.txt) || '')}</textarea>
+      ${p && p.err ? `<p class="err" role="alert" style="margin:0">${esc(p.err)}</p>` : ''}
+      <button class="btn" data-act="imp-ler">Ler o bloco</button>${prev}</div>`;
   }
 
   // ---------- Folhas (formulários) ----------
@@ -1072,7 +1272,7 @@
   };
   function drawChart(el) {
     const spec = S.charts[el.dataset.chart]; if (!spec) return;
-    const W = Math.max(240, el.clientWidth), H = el.clientHeight || 200;
+    const W = spec.W || Math.max(240, el.clientWidth), H = spec.H || el.clientHeight || 200;
     const padL = 42, padR = 6, padT = 16, padB = 22;
     const iw = W - padL - padR, ih = H - padT - padB;
     const n = spec.months.length, band = iw / n;
@@ -1124,7 +1324,7 @@
     }
     const hits = spec.months.map((ym, i) => `<rect x="${padL + i * band}" y="${padT}" width="${band}" height="${ih + padB}" fill="transparent" data-hit="${i}" ${spec.act ? `data-act="${spec.act}" data-ym="${ym}"` : ''} style="cursor:pointer"/>`).join('');
     spec.tips = tips;
-    el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de barras por mês">${g}<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>${bars}${avg}${hits}</svg><div class="tip" hidden></div>`;
+    el.innerHTML = `<svg width="100%" viewBox="0 0 ${W} ${H}" style="height:auto" role="img" aria-label="Gráfico de barras por mês">${g}<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>${bars}${avg}${hits}</svg><div class="tip" hidden></div>`;
   }
   function drawCharts() { document.querySelectorAll('[data-chart]').forEach((el) => { try { drawChart(el); } catch (e) { console.warn('chart', e); } }); }
   function showTip(rect) {
@@ -1139,7 +1339,7 @@
   // ---------- Render ----------
   let pendingRender = false;
   const TABS = { inicio: 'Início', lancamentos: 'Lançamentos', cartoes: 'Cartões', relatorios: 'Relatórios', ajustes: 'Ajustes' };
-  const SUBS = { trava: 'Trava com a digital', recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
+  const SUBS = { importar: 'Importar lançamentos', trava: 'Trava com a digital', recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
   function syncHtml() {
     const n = S.outbox.length;
     if (S.net === 'sync') return '<span class="sync"><i></i>sincronizando</span>';
@@ -1152,6 +1352,7 @@
   function render() {
     const root = $('#app'); if (!root) return;
     if (S.conn && S.locked) { root.innerHTML = viewLock(); return; }
+    if (S.conn && S.ui.report) { try { root.innerHTML = viewReport(); drawCharts(); } catch (e) { console.error(e); S.ui.report = null; toast('Não consegui montar o relatório.'); render(); } return; }
     if (!S.conn) {
       const active = document.activeElement; const keepId = active && root.contains(active) ? active.id : null;
       root.innerHTML = viewSetup();
@@ -1243,6 +1444,18 @@
       case 'close-sheet': if (st && st.kind === 'cat' && st.back) { const b = st.back; sheetState = b; closeSheet(true); if (b.kind === 'lanc') renderLanc(); else if (b.kind === 'rec') renderRec(); } else closeSheet(); break;
       case 'flush': S.retryN = 0; sync(); break;
       case 'unlock': desbloquear(); break;
+      case 'rp-open': S.ui.report = { per: 'tudo' }; render(); window.scrollTo(0, 0); break;
+      case 'rp-per': S.ui.report.per = el.dataset.p; render(); break;
+      case 'rp-close': S.ui.report = null; render(); window.scrollTo(0, 0); break;
+      case 'rp-print': { const old = document.title; document.title = `Todo dIA - relatório ${hoje()}`; try { window.print(); } catch { toast('Não consegui abrir a impressão. Abra o app pelo Chrome e tente de novo.'); } setTimeout(() => { document.title = old; }, 1500); break; }
+      case 'imp-ler': { const txt = ($('#impTxt') || {}).value || ''; S.ui.imp = { txt }; try { S.ui.imp.ok = lerImportacao(txt); } catch (e) { S.ui.imp.err = e.message; } render(); break; }
+      case 'imp-ok': {
+        const p = S.ui.imp && S.ui.imp.ok; if (!p) break;
+        for (const it of p.itens) saveItem(clone(it));
+        for (const f of p.fixos) { const r = clone(f.r); if (f.excluir) r.excluido = true; Object.assign(r, f.set); saveRec(r); }
+        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.fixos.length ? ` e ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}.`);
+        setTab('cartoes'); break;
+      }
       case 'lock-on': ligarTrava(); break;
       case 'lock-off': desligarTrava(); break;
       case 'lock-now': trancar(); break;
