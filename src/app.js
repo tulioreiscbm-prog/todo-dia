@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -489,7 +489,7 @@
       hero = `<section class="card hero">
         <div class="row between"><span class="pill acc">Cartões somados</span><span class="small muted">${quando}</span></div>
         <div class="big num">${brlParts(tot)[0]}<span class="cents">${brlParts(tot)[1]}</span></div>
-        <div class="stack" style="gap:8px">${porCartao.map((x) => `<button class="row between small" data-act="card" data-id="${esc(x.c.id)}" style="text-align:left;width:100%"><span class="ink2"><i class="dot" style="background:${esc(x.c.cor || 'var(--accent)')}"></i>${esc(x.c.nome)} · vence ${dataCurta(x.f.vence)}${x.st === 'aberta' ? ` · fecha ${dataCurta(x.f.fecha)}` : x.st === 'fechada' ? ' · fechada' : ' · vencida'}</span><b class="num">${brl(x.tot)}</b></button>`).join('')}</div>
+        <div class="stack" style="gap:8px">${porCartao.map((x) => `<button class="cardline" data-act="card" data-id="${esc(x.c.id)}"><span class="ink2"><i class="dot" style="background:${esc(x.c.cor || 'var(--accent)')}"></i>${esc(x.c.nome)} · vence ${dataCurta(x.f.vence)}${x.st === 'aberta' ? ` · fecha ${dataCurta(x.f.fecha)}` : x.st === 'fechada' ? ' · fechada' : ' · vencida'}</span><b class="num">${brl(x.tot)}</b></button>`).join('')}</div>
         <div class="stack" style="gap:6px">${compRow('Compras do período', comp.compras)}${compRow('Parcelas', comp.parcelas)}${compRow('Gastos fixos', comp.fixos)}${compRow('Ajuste de valor anterior ao app', comp.ajuste)}</div>
       </section>`;
     } else {
@@ -1248,7 +1248,7 @@
         <div class="field grow"><label for="rFim">Termina em (opcional)</label><input class="inp" type="month" id="rFim" value="${esc(r.fim || '')}"></div></div>
       ${st.err ? `<p class="err" role="alert">${esc(st.err)}</p>` : ''}
       <button class="btn pri" data-act="r-save">${ic('check')}Salvar</button>
-      ${st.isEdit ? `<button class="btn danger" data-act="r-end">${r.inicio > ym ? 'Excluir este fixo' : `Encerrar (último mês: ${esc(mesCurto(E.addMonthsYM(ym, -1) < r.inicio ? r.inicio : E.addMonthsYM(ym, -1)))})`}</button>` : ''}`;
+      ${st.isEdit ? `<button class="btn danger" data-act="r-end">Encerrar ou excluir</button>` : ''}`;
     const sh = $('#sheet');
     if (sh) { const sc = sh.scrollTop; $('.sheet-in', sh).innerHTML = html; sh.scrollTop = sc; } else openSheet(html);
     const d = $('#rDesc'), v = $('#rValor'), ini = $('#rIni'), fim = $('#rFim'), desde = $('#rDesde');
@@ -1259,6 +1259,34 @@
     fim.onchange = () => { r.fim = /^\d{4}-\d{2}$/.test(fim.value) ? fim.value : null; };
     if (desde) desde.onchange = () => { if (/^\d{4}-\d{2}$/.test(desde.value)) st.desde = desde.value; };
     const md = $('#rMeioDesde'); if (md) md.onchange = () => { if (/^\d{4}-\d{2}$/.test(md.value)) st.desdeMeio = md.value; };
+  }
+  // Encerrar a recorrência (escolhendo a última cobrança) ou excluir por completo
+  function openEncerrar(rec) {
+    const r = clone(rec), t = hoje(), ym = E.ymOf(t);
+    const cobrouEsteMes = E.parseISO(t).d >= (r.dia || 1);
+    let ultimo = cobrouEsteMes ? ym : E.addMonthsYM(ym, -1);
+    if (r.fim && r.fim < ultimo) ultimo = r.fim;
+    sheetState = { kind: 'encerrar', r, modo: ultimo < r.inicio ? 'excluir' : 'encerrar', ultimo: ultimo < r.inicio ? r.inicio : ultimo, sugerido: ultimo };
+    renderEncerrar();
+  }
+  function renderEncerrar() {
+    const st = sheetState, r = st.r, ym = ymHoje();
+    const cobrados = (ate) => E.monthsBetween(r.inicio, ate < r.inicio ? r.inicio : ate).filter((m) => m <= (r.fim || '9999-12') && E.valorRecorrente(r, m));
+    const ateHoje = cobrados(ym < r.inicio ? r.inicio : ym).filter((m) => m <= ym);
+    const ficam = cobrados(st.ultimo).filter((m) => m <= st.ultimo);
+    const saem = ateHoje.filter((m) => m > st.ultimo);
+    const lista = (ms) => ms.map(mesCurto).join(', ');
+    const html = `${sheetHead('Encerrar ou excluir')}
+      <p class="ink2" style="margin:0">O que fazer com <b style="color:var(--ink)">${esc(r.desc)}</b>?</p>
+      <div class="seg" role="group" aria-label="Ação"><button data-act="enc-modo" data-v="encerrar" aria-pressed="${st.modo === 'encerrar'}">Encerrar a recorrência</button><button data-act="enc-modo" data-v="excluir" aria-pressed="${st.modo === 'excluir'}">Excluir por completo</button></div>
+      ${st.modo === 'encerrar' ? `<div class="field"><label for="encUlt">Última cobrança em</label><input class="inp" type="month" id="encUlt" value="${esc(st.ultimo)}" min="${esc(r.inicio)}">
+          <span class="tiny muted">A partir de ${esc(mesNome(E.addMonthsYM(st.ultimo, 1)))} não há mais cobrança. Se o cancelamento passou batido, escolha um mês anterior: as cobranças depois dele saem das faturas e dos relatórios.</span></div>
+        <div class="hint">${ic('info')}<span>${ficam.length ? `Ficam no histórico: ${esc(lista(ficam))}.` : 'Nenhuma cobrança fica no histórico.'}${saem.length ? ` <b>Saem</b> (já estavam registradas): ${esc(lista(saem))}.` : ''}</span></div>`
+      : `<div class="hint">${ic('alert')}<span>Apaga este fixo e ${ateHoje.length ? `as ${ateHoje.length} cobranças já registradas (${esc(lista(ateHoje))})` : 'todas as previsões'}. Use só se ele foi cadastrado por engano.</span></div>`}
+      <div class="btns" style="grid-template-columns:1fr 1fr"><button class="btn" data-act="enc-voltar">Voltar</button><button class="btn danger" data-act="enc-ok">${st.modo === 'encerrar' ? 'Encerrar' : 'Excluir'}</button></div>`;
+    const sh = $('#sheet');
+    if (sh) $('.sheet-in', sh).innerHTML = html; else openSheet(html);
+    const u = $('#encUlt'); if (u) u.onchange = () => { if (/^\d{4}-\d{2}$/.test(u.value) && u.value >= r.inicio) { st.ultimo = u.value; renderEncerrar(); } };
   }
   async function saveRecForm() {
     const st = sheetState, r = st.r;
@@ -1683,10 +1711,13 @@
       case 'r-divn': st.r.div = Math.min(20, Math.max(2, st.r.div + +el.dataset.d)); renderRec(); break;
       case 'r-cat': { const r = st.r; openCatPicker(r.tipo, (c, s) => { r.catId = c; r.subId = s; const sd = E.findSub(categorias(), c, s); if (sd && sd.div > 1 && r.div === 1) r.div = sd.div; }, { catId: r.catId, subId: r.subId }); break; }
       case 'r-save': saveRecForm(); break;
-      case 'r-end': {
-        const r = st.r, ym = ymHoje();
-        if (r.inicio > ym) { closeSheet(); r.excluido = true; if (await saveRec(r)) { S.recorrentes = S.recorrentes.filter((x) => x.id !== r.id); bump(); render(); toast('Fixo excluído.'); } }
-        else { const fim = E.addMonthsYM(ym, -1) < r.inicio ? r.inicio : E.addMonthsYM(ym, -1); confirmSheet('Encerrar fixo', `"${r.desc}" deixa de entrar a partir de ${mesNome(E.addMonthsYM(fim, 1))}. O histórico fica.`, 'Encerrar', async () => { r.fim = fim; if (await saveRec(r)) toast('Fixo encerrado.'); }); }
+      case 'r-end': { const orig = S.recorrentes.find((x) => x.id === st.r.id) || st.r; openEncerrar(orig); break; }
+      case 'enc-modo': st.modo = el.dataset.v; renderEncerrar(); break;
+      case 'enc-voltar': { const orig = S.recorrentes.find((x) => x.id === st.r.id); closeSheet(true); if (orig) openRec(orig); else closeSheet(); break; }
+      case 'enc-ok': {
+        const r = st.r; closeSheet();
+        if (st.modo === 'excluir') { r.excluido = true; if (await saveRec(r)) { S.recorrentes = S.recorrentes.filter((x) => x.id !== r.id); bump(); render(); toast('Fixo excluído.'); } }
+        else { r.fim = st.ultimo; if (await saveRec(r)) toast(`Encerrado. Última cobrança: ${mesNome(st.ultimo)}.`); }
         break;
       }
       // meios
