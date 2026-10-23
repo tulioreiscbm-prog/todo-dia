@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.2.0';
+  const VERSION = '2.2.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -884,7 +884,14 @@
       if (!r) throw new Error(`Fixo "${f.id}" não existe no seu app.`);
       return { r, set: f.set || {}, excluir: !!f.excluir };
     });
-    return { itens, fixos, titulo: obj.titulo || 'Importação' };
+    const meiosP = (obj.meios || []).map((m) => {
+      const x = meios().find((y) => y.id === m.id);
+      if (!x) throw new Error(`Forma de pagamento "${m.id}" não existe no seu app.`);
+      const set = {};
+      for (const [k, v] of Object.entries(m.set || {})) if (['fechamento', 'vencimento'].includes(k) && Number.isInteger(v) && v >= 1 && v <= 31) set[k] = v; else if (k === 'nome' && typeof v === 'string' && v.trim()) set.nome = v.trim().slice(0, 40);
+      return { m: x, set };
+    });
+    return { itens, fixos, meios: meiosP, titulo: obj.titulo || 'Importação' };
   }
   function viewImportar() {
     const p = S.ui.imp;
@@ -893,6 +900,7 @@
       const tot = E.sum(p.ok.itens, (i) => i.valor);
       prev = `<div class="card stack" style="gap:8px"><b>${esc(p.ok.titulo)}</b>
         ${p.ok.itens.length ? `<div class="list">${p.ok.itens.map((i) => `<div class="li"><span class="mono">${esc(iniciais(i.desc))}</span><span class="grow"><span class="t" style="display:block">${esc(i.desc)}</span><span class="s" style="display:block">${esc(catNome(i.catId, i.subId))} · ${esc((meioById(i.meioId) || {}).nome || '')}${i.parcelas > 1 ? ` · ${i.parcelas}x de ${brl(E.splitParcelas(i.valor, i.parcelas)[0])}` : ''}</span></span><span class="amt">${brl(i.valor)}</span></div>`).join('')}</div>` : ''}
+        ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : `${esc(k)} = ${esc(v)}`).join(', ')}</span></div>`).join('')}
         <div class="row between small"><span class="ink2">${p.ok.itens.length} lançamentos</span><b>${brl(tot)}</b></div>
         <button class="btn pri" data-act="imp-ok">${ic('check')}Importar</button></div>`;
@@ -1452,8 +1460,9 @@
       case 'imp-ok': {
         const p = S.ui.imp && S.ui.imp.ok; if (!p) break;
         for (const it of p.itens) saveItem(clone(it));
+        if (p.meios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); saveMeios(lista); }
         for (const f of p.fixos) { const r = clone(f.r); if (f.excluir) r.excluido = true; Object.assign(r, f.set); saveRec(r); }
-        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.fixos.length ? ` e ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}.`);
+        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}.`);
         setTab('cartoes'); break;
       }
       case 'lock-on': ligarTrava(); break;
