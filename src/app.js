@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.3.0';
+  const VERSION = '2.4.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -104,6 +104,7 @@
     for (const o of S.outbox) { if (o.t === 'lanc') map.set(o.item.id, o.item); else if (o.t === 'apagar') map.delete(o.id); }
     return [...map.values()];
   }
+  const itensAtuais = () => itens();
   function D() {
     const t = hoje();
     if (S.memo && S.memo.v === S.version && S.memo.t === t) return S.memo;
@@ -237,9 +238,11 @@
     const meio = meioById(o.meioId);
     const tags = [];
     if (o.fixo) tags.push('fixo');
-    if (o.parcela) tags.push(`${o.parcela[0]}/${o.parcela[1]}`);
+    const parc = [];
+    if (o.parcela) parc.push(`${o.parcela[0]}/${o.parcela[1]}`);
+    if (o.parcela && o.dataCompra && o.dataCompra !== o.data) parc.push(`compra ${o.dataCompra.slice(8)}/${o.dataCompra.slice(5, 7)}`);
     if (o.div > 1) tags.push(`÷${o.div}`);
-    const sub = [subSo(o.catId, o.subId) || catSo(o.catId), meio ? meio.nome : '', ...tags].filter(Boolean).join(' · ');
+    const sub = [...parc, subSo(o.catId, o.subId) || catSo(o.catId), meio ? meio.nome : '', ...tags].filter(Boolean).join(' · ');
     const isRess = o.tipo === 'ressarcimento';
     const isIn = o.tipo === 'receita' || isRess;
     const val = isRess ? '−' + brl(o.valor) : isIn ? '+' + brl(o.valor) : brl(o.tipo === 'ajuste' ? o.valor : o.minha);
@@ -879,6 +882,7 @@
 
   // ---------- Importar lançamentos (bloco preparado pelo Claude) ----------
   function lerImportacao(txt) {
+    const atuais = itensAtuais();
     const m = String(txt || '').replace(/\s+/g, '').match(/TODODIA1:([A-Za-z0-9_-]+)/);
     if (!m) throw new Error('Não encontrei o bloco. Ele começa com TODODIA1:');
     let obj;
@@ -894,10 +898,10 @@
       return it;
     });
     const fixos = (obj.fixos || []).map((f) => {
-      const r = S.recorrentes.find((x) => x.id === f.id);
-      if (!r) throw new Error(`Fixo "${f.id}" não existe no seu app.`);
+      const r = S.recorrentes.find((x) => x.id === f.id && !x.excluido);
+      if (!r) { if (f.excluir) return null; throw new Error(`Fixo "${f.id}" não existe no seu app.`); }
       return { r, set: f.set || {}, excluir: !!f.excluir };
-    });
+    }).filter(Boolean);
     const meiosP = (obj.meios || []).map((m) => {
       const x = meios().find((y) => y.id === m.id);
       if (!x) throw new Error(`Forma de pagamento "${m.id}" não existe no seu app.`);
@@ -910,7 +914,8 @@
       if (k === 'inicioAcomp' && /^\d{4}-\d{2}$/.test(v)) prefs.inicioAcomp = v;
       if (k === 'inicioUso' && /^\d{4}-\d{2}-\d{2}$/.test(v)) prefs.inicioUso = v;
     }
-    return { itens, fixos, meios: meiosP, prefs, titulo: obj.titulo || 'Importação' };
+    const apagar = (obj.apagar || []).map((id) => atuais.find((x) => x.id === String(id) && !x.excluido)).filter(Boolean);
+    return { itens, fixos, meios: meiosP, prefs, apagar, titulo: obj.titulo || 'Importação' };
   }
   function viewImportar() {
     const p = S.ui.imp;
@@ -922,6 +927,7 @@
         ${p.ok.prefs.inicioAcomp ? `<div class="hint">${ic('calendar')}<span>Relatórios e totais passam a contar a partir de ${esc(mesNome(p.ok.prefs.inicioAcomp))}.</span></div>` : ''}
         ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : `${esc(k)} = ${esc(v)}`).join(', ')}</span></div>`).join('')}
+        ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
         <div class="row between small"><span class="ink2">${p.ok.itens.length} lançamentos</span><b>${brl(tot)}</b></div>
         <button class="btn pri" data-act="imp-ok">${ic('check')}Importar</button></div>`;
     }
@@ -1055,8 +1061,15 @@
     vibrate();
     if (more) { openLanc({ meioId: item.meioId, data: item.data, tipo: item.tipo }); } else closeSheet();
     const ok = await saveItem(item, prevYm, { silent: false });
-    const f = meio && meio.tipo === 'credito' && item.tipo === 'despesa' ? E.fatura(meio, item.data) : null;
-    if (ok) toast(wasEdit ? 'Lançamento atualizado.' : f ? `Lançado. Entrou na fatura de ${MES3[+f.ref.slice(5) - 1]}.` : 'Lançado.', wasEdit ? null : { label: 'Desfazer', fn: () => softDelete(item, true) });
+    if (ok) toast(wasEdit ? 'Lançamento atualizado.' : msgLancado(item), wasEdit ? null : { label: 'Desfazer', fn: () => softDelete(item, true) });
+  }
+  function msgLancado(item) {
+    const m = meioById(item.meioId);
+    const f = m && m.tipo === 'credito' && item.tipo === 'despesa' ? E.fatura(m, item.data) : null;
+    if (!f) return 'Lançado.';
+    const n = item.parcelas || 1;
+    if (n > 1) { const ult = E.fatura(m, item.data, n - 1).ref; return `Lançado em ${n}x. Cada parcela conta no mês em que é cobrada: de ${MES3[+f.ref.slice(5) - 1]} a ${MES3[+ult.slice(5) - 1]}${ult.slice(0, 4) !== f.ref.slice(0, 4) ? '/' + ult.slice(2, 4) : ''}.`; }
+    return `Lançado. Entrou na fatura de ${MES3[+f.ref.slice(5) - 1]}.`;
   }
   async function softDelete(item, quiet) {
     const it = clone(item); it.excluido = true; it.excluidoEm = Date.now();
@@ -1457,8 +1470,7 @@
     learn(item.desc, item.catId, item.subId, item.meioId);
     vibrate();
     if (!(await saveItem(item, null))) return;
-    const m = meioById(item.meioId); const f = m && m.tipo === 'credito' && item.tipo === 'despesa' ? E.fatura(m, item.data) : null;
-    toast(f ? `Lançado. Entrou na fatura de ${MES3[+f.ref.slice(5) - 1]}.` : 'Lançado.', { label: 'Desfazer', fn: () => softDelete(item, true) });
+    toast(msgLancado(item), { label: 'Desfazer', fn: () => softDelete(item, true) });
   }
 
   // ---------- Ações ----------
@@ -1481,10 +1493,11 @@
       case 'imp-ok': {
         const p = S.ui.imp && S.ui.imp.ok; if (!p) break;
         for (const it of p.itens) saveItem(clone(it));
+        for (const it of p.apagar) { const r = clone(it); r.excluido = true; r.excluidoEm = Date.now(); saveItem(r, null); }
         if (Object.keys(p.prefs).length) savePrefs(p.prefs);
         if (p.meios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); saveMeios(lista); }
         for (const f of p.fixos) { const r = clone(f.r); if (f.excluir) r.excluido = true; Object.assign(r, f.set); saveRec(r); }
-        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}.`);
+        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.apagar.length ? `, ${p.apagar.length} apagados` : ''}${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}.`);
         setTab('cartoes'); break;
       }
       case 'lock-on': ligarTrava(); break;

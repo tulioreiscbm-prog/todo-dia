@@ -1,5 +1,5 @@
 /* Todo dIA — service worker: deixa o app abrir sem internet. Os dados vão direto para a planilha (não passam por aqui). */
-const VERSAO = 'todo-dia-2.3.0';
+const VERSAO = 'todo-dia-2.4.0';
 const BASE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {

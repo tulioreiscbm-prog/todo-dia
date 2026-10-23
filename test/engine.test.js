@@ -181,13 +181,18 @@ test('expansão: parcelas, divisão, faturas e previsto', () => {
   const hoje = '2026-10-22';
   const out = E.expandir(state, '2026-10', '2027-02', hoje);
   const tv = out.filter((o) => o.refId === 'a');
-  assert.deepEqual(tv.map((o) => [o.comp, o.valor, o.fatura]), [['2026-12', 100000, '2027-01'], ['2026-11', 100000, '2026-12'], ['2026-10', 100000, '2026-11']]);
+  // parcelado no cartão: cada parcela conta no mês em que a fatura vence
+  assert.deepEqual(tv.map((o) => [o.comp, o.valor, o.fatura, o.data]).sort(), [['2026-11', 100000, '2026-11', '2026-11-07'], ['2026-12', 100000, '2026-12', '2026-12-07'], ['2027-01', 100000, '2027-01', '2027-01-07']]);
+  assert.ok(tv.every((o) => o.dataCompra === '2026-10-22' && o.previsto));
+  // parcela restante importada da fatura (uma só): conta no mês da fatura, não no da compra
+  const imp = E.expandir({ meios: T.meios, itens: [{ id: 'IMP-x', tipo: 'despesa', desc: 'Loja (3 de 3)', valor: 10808, parcelas: 1, data: '2026-10-24', meioId: 'inter-credito', catId: 'casa', subId: 'reparos' }], recorrentes: [] }, '2026-10', '2027-02', hoje);
+  assert.deepEqual(imp.map((o) => [o.comp, o.fatura, o.data]), [['2026-11', '2026-11', '2026-11-07']]);
   const en = out.find((o) => o.refId === 'b');
   assert.equal(en.minha, 4600); assert.equal(en.receber, 18400);
   assert.ok(!out.some((o) => o.refId === 'd' || o.refId === 'e'));
   assert.equal(out.find((o) => o.refId === 'f').fatura, null); // boleto não tem fatura
   const outubro = E.resumoMes(out, '2026-10');
-  assert.equal(outubro.gastoReal, 100000 + 4600 + 5000);
+  assert.equal(outubro.gastoReal, 4600 + 5000); // a TV em 3x só começa a contar em novembro
   assert.equal(outubro.rendaReal, 85000);
   assert.equal(outubro.receber, 18400);
   // fixos começam em 1º de novembro; repasse termina em janeiro
@@ -204,7 +209,7 @@ test('expansão: parcelas, divisão, faturas e previsto', () => {
   const ress = out.find((o) => o.refId === 'ress' && o.comp === '2026-11');
   assert.equal(ress.receber, 30000); assert.equal(ress.fatura, null);
   const novR = E.resumoMes(out, '2026-12');
-  assert.equal(novR.brutoPrev, 100000 + 9170 + 4490 + 10735 + 40000);
+  assert.equal(novR.brutoPrev, 100000 + 9170 + 4490 + 10735 + 40000); // 2ª parcela da TV (fatura de dezembro) + fixos
   assert.equal(novR.gastoPrev, novR.brutoPrev - 30000);
   assert.ok(!E.porCategoria(out.filter((o) => o.comp === '2026-11'), T.categorias).some((c) => c.catId === 'ressarcimentos'));
   // fatura Inter de dezembro: 2ª parcela da TV + fixos de novembro no Inter crédito

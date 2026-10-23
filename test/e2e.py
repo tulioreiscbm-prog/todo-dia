@@ -111,7 +111,12 @@ async def main():
                 await pg.reload(); await pg.wait_for_timeout(1000)
                 await pg.click('[data-tab=lancamentos]'); await pg.wait_for_timeout(300)
                 t2 = await pg.inner_text('main')
-                ok(all(x in t2 for x in ['Padaria', 'Supernosso', 'Açougue', 'Capacete']), 'recarregar mantém tudo (cópia local + planilha)')
+                ok(all(x in t2 for x in ['Padaria', 'Supernosso', 'Açougue']) and 'Capacete' not in t2, 'recarregar mantém tudo (cópia local + planilha)')
+                await pg.click('[data-act=mes][data-d="1"]'); await pg.wait_for_timeout(250)
+                t3 = await pg.inner_text('main')
+                ok('Capacete' in t3 and '1/3' in t3 and 'compra 22/10' in t3, 'parcelado no C6: 1ª parcela conta em novembro, com a data da compra')
+                await pg.screenshot(path=str(SHOTS / f'{scheme}-05-parcela-nov.png'), full_page=True)
+                await pg.click('[data-act=mes][data-d="-1"]'); await pg.wait_for_timeout(250)
                 for tab in ['lancamentos', 'cartoes', 'relatorios', 'ajustes']:
                     await pg.click(f'[data-tab={tab}]'); await pg.wait_for_timeout(300)
                     await pg.screenshot(path=str(SHOTS / f'{scheme}-04-{tab}.png'), full_page=True)

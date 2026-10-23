@@ -320,13 +320,17 @@ const Engine = (() => {
       const partes = splitParcelas(it.valor, n);
       const baseComp = ymOf(it.data);
       for (let k = 0; k < n; k++) {
-        const comp = addMonthsYM(baseComp, k);
+        const f = meio && meio.tipo === 'credito' && (it.tipo === 'despesa' || it.tipo === 'ajuste') ? fatura(meio, it.data, k) : null;
+        // compra parcelada no cartão: cada parcela conta no mês em que é cobrada (vencimento da fatura).
+        // à vista: conta no dia da compra. Parcelas restantes importadas das faturas (id "IMP-") seguem a regra
+        // das parcelas mesmo quando sobra uma só.
+        const parcelado = f && it.tipo === 'despesa' && (n > 1 || /^IMP-/.test(it.id));
+        const comp = parcelado ? f.ref : addMonthsYM(baseComp, k);
         if (comp < de || comp > ate) continue;
         const valor = partes[k];
         const div = it.tipo === 'despesa' && it.div >= 2 ? it.div : 1;
         const minha = Math.round(valor / div);
-        const f = meio && meio.tipo === 'credito' && (it.tipo === 'despesa' || it.tipo === 'ajuste') ? fatura(meio, it.data, k) : null;
-        const dataOc = k === 0 ? it.data : clampDate(comp, parseISO(it.data).d);
+        const dataOc = parcelado ? f.vence : k === 0 ? it.data : clampDate(comp, parseISO(it.data).d);
         out.push({
           key: n > 1 ? `${it.id}#${k + 1}` : it.id, origem: 'lanc', refId: it.id, tipo: it.tipo,
           desc: it.desc, catId: it.catId, subId: it.subId, meioId: it.meioId, data: dataOc, dataCompra: it.data,
