@@ -2,6 +2,13 @@
 
 Controle de gastos do dia a dia: lançamento rápido por frase ("açougue 87,50 inter ontem"), previsão das faturas de cartão, gastos fixos, divisão de despesas com a família e relatórios interativos.
 
+## Quando um gasto conta
+
+- **À vista** (cartão, Pix, débito, boleto): no dia da compra.
+- **Parcelado no cartão:** cada parcela é gasto do mês da fatura que a cobra e já conta desde o dia 1º desse mês.
+- **Fixos** (contratos com o mesmo valor todo mês): contam desde o dia 1º de cada mês; no cartão, o dia da cobrança define a fatura.
+- **Espólio:** uma marcação no lançamento que separa esses custos nos relatórios. Não divide nada sozinha.
+
 **App:** https://tulioreiscbm-prog.github.io/todo-dia
 
 ## Onde ficam os dados
@@ -40,7 +47,7 @@ Quando o `Codigo.gs` mudar, cole a versão nova no Apps Script e vá em **Implan
 
 ## Para quem for mexer no código
 
-- `src/engine.js`: regras puras (datas, faturas, parcelas, fixos, divisão, médias), com testes em `test/engine.test.js` (`node --test test/`).
+- `src/engine.js`: regras puras (datas, faturas, parcelas, fixos, divisão, médias), com testes em `test/engine.test.js` e `test/gas.test.js` (`node --test test/engine.test.js test/gas.test.js`).
 - `src/taxonomy.js`: categorias e dicionário genéricos. Dados pessoais ficam só na planilha.
 - `src/app.js` e `src/app.css`: telas e gráficos.
 - `apps-script/Codigo.gs`: API da planilha. `test/gas-sim.js` simula o Google para testar localmente.

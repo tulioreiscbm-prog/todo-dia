@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.4.0';
+  const VERSION = '1.0.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -156,7 +156,7 @@
   }
   function receber(dados) {
     if (!dados) return;
-    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '' };
+    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '', recursos: dados.recursos || [], versao: dados.versao || '' };
     S.lastSync = Date.now();
     lsSet(LS.data, { server: S.server, at: S.lastSync });
   }
@@ -200,11 +200,13 @@
   function savePrefs(patch) { saveConfig('prefs', Object.assign({}, S.cfg.prefs, patch)); }
   function saveMeios(lista) { saveConfig('meios', lista); }
   function saveCategorias(lista) { saveConfig('categorias', lista); }
-  function learn(desc, catId, subId, meioId) {
+  function learn(desc, catId, subId, meioId, espolio) {
     const key = E.ruleKey(desc); if (!key || key.length < 2) return;
     const prev = S.cfg.regras[key];
-    if (prev && prev.catId === catId && prev.subId === subId && prev.meioId === meioId) return;
-    let map = Object.assign({}, S.cfg.regras, { [key]: { catId, subId, meioId: meioId || null, n: ((prev && prev.n) || 0) + 1, at: Date.now() } });
+    if (prev && prev.catId === catId && prev.subId === subId && prev.meioId === meioId && !!prev.espolio === !!espolio) return;
+    const regra = { catId, subId, meioId: meioId || null, n: ((prev && prev.n) || 0) + 1, at: Date.now() };
+    if (espolio) regra.espolio = true;
+    let map = Object.assign({}, S.cfg.regras, { [key]: regra });
     const ks = Object.keys(map);
     if (ks.length > 400) map = Object.fromEntries(Object.entries(map).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 400));
     saveConfig('regras', map);
@@ -239,9 +241,10 @@
     const tags = [];
     if (o.fixo) tags.push('fixo');
     const parc = [];
-    if (o.parcela) parc.push(`${o.parcela[0]}/${o.parcela[1]}`);
-    if (o.parcela && o.dataCompra && o.dataCompra !== o.data) parc.push(`compra ${o.dataCompra.slice(8)}/${o.dataCompra.slice(5, 7)}`);
+    if (o.parcela) parc.push(`parcela ${o.parcela[0]}/${o.parcela[1]}`);
+    if (o.parcela && !o.parcelaAntiga && o.dataCompra && o.dataCompra !== o.data) parc.push(`compra ${dataCurta(o.dataCompra)}`);
     if (o.div > 1) tags.push(`÷${o.div}`);
+    if (o.espolio) tags.push('espólio');
     const sub = [...parc, subSo(o.catId, o.subId) || catSo(o.catId), meio ? meio.nome : '', ...tags].filter(Boolean).join(' · ');
     const isRess = o.tipo === 'ressarcimento';
     const isIn = o.tipo === 'receita' || isRess;
@@ -252,6 +255,15 @@
       <span class="grow"><span class="t" style="display:block">${esc(o.desc || 'Sem descrição')}</span><span class="s" style="display:block">${esc(sub)}</span></span>
       <span class="amt ${isIn ? 'in' : ''}">${val}${small}</span></button>`;
   }
+  // item de fatura: sem ícone, descrição inteira e a parcela sempre visível
+  function faturaRow(o) {
+    const linha2 = [o.parcela ? `parcela ${o.parcela[0]}/${o.parcela[1]}` : o.fixo ? 'fixo' : o.tipo === 'ajuste' ? 'ajuste' : `compra ${dataCurta(o.dataCompra || o.data)}`,
+      subSo(o.catId, o.subId) || catSo(o.catId), o.espolio ? 'espólio' : ''].filter(Boolean).join(' · ');
+    const small = o.div > 1 ? `<small>sua parte ${brl(o.minha)}</small>` : '';
+    return `<button class="li fat" data-act="open-occ" data-key="${esc(o.key)}">
+      <span class="grow"><span class="t">${esc(o.desc || 'Sem descrição')}</span><span class="s">${esc(linha2)}</span></span>
+      <span class="amt">${brl(o.valor)}${small}</span></button>`;
+  }
   function emptyState(title, text, btn) {
     return `<div class="empty">${LOGO()}<b>${esc(title)}</b><span class="small">${esc(text)}</span>${btn || ''}</div>`;
   }
@@ -260,8 +272,10 @@
     const n = S.outbox.length;
     if (S.net === 'erro' && S.syncErr) out.push(`<div class="banner">${ic('alert')}<span>${esc(S.syncErr)} <button data-act="sub" data-sub="conexao">Ver conexão</button></span></div>`);
     if (n && S.net !== 'sync') out.push(`<div class="banner">${ic('cloud')}<span>${n === 1 ? '1 alteração guardada' : n + ' alterações guardadas'} no aparelho, esperando a internet para ir para a planilha. <button data-act="flush">Enviar agora</button></span></div>`);
+    if (S.conn && S.lastSync && !temRecurso('espolio')) out.push(`<div class="banner">${ic('alert')}<span>O programa da sua planilha está desatualizado: a marcação de espólio e as parcelas antigas ainda não são guardadas. <button data-act="sub" data-sub="sobre">Como atualizar</button></span></div>`);
     return out.join('');
   }
+  const temRecurso = (r) => ((S.server && S.server.recursos) || []).includes(r);
 
   // ---------- Trava com a digital (chave de acesso do próprio celular) ----------
   const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -376,6 +390,7 @@
         <div class="row between"><span class="lead">Até hoje, em ${esc(MESES[+ym.slice(5) - 1])}, gastei</span><button class="small" style="color:var(--accent-ink);font-weight:650" data-act="tab" data-tab="relatorios">Relatórios</button></div>
         <div class="big num">${esc(a)}<span class="cents">${esc(b)}</span></div>
         <div class="small ink2">Previsão até ${fimMes}: <b class="num" style="color:var(--ink)">${brl(r.gastoReal + r.gastoPrev)}</b>${r.ressarcReal ? ` · já descontados ${brl(r.ressarcReal)} de ressarcimento` : ''}</div>
+        ${r.fixos + r.parcelas ? `<div class="small ink2">Já inclui <b class="num" style="color:var(--ink)">${brl(r.fixos + r.parcelas)}</b> de gastos certos do mês (${[r.fixos ? `fixos ${brl(r.fixos)}` : '', r.parcelas ? `parcelas ${brl(r.parcelas)}` : ''].filter(Boolean).join(', ')}), que contam desde o dia 1º.${r.espolio ? ` Espólio: ${brl(r.espolio)}.` : ''}</div>` : r.espolio ? `<div class="small ink2">Espólio: ${brl(r.espolio)}.</div>` : ''}
         ${mediaTxt ? `<div>${mediaTxt}</div>` : ''}
         ${pace}
         <div class="kpis"><div class="kpi"><span>Entradas</span><strong>${brl(r.rendaReal)}</strong></div>
@@ -402,9 +417,9 @@
     return `<div class="card preview" aria-live="polite">
       <div class="row between"><span class="eyebrow">${p.tipo === 'receita' ? 'Entrada' : 'Gasto'} entendido</span>${p.fonte === 'regra' ? '<span class="pill acc">aprendido</span>' : ''}</div>
       <div class="row between"><div class="grow"><b style="display:block;font-size:17px">${esc(p.desc || 'Sem descrição')}</b>
-        <span class="small muted">${esc(p.catId ? catNome(p.catId, p.subId) : 'Sem categoria')} · ${esc(meio ? meio.nome : '')} · ${esc(p.data === hoje() ? 'hoje' : dataCurta(p.data))}${p.parcelas > 1 ? ` · ${p.parcelas}x` : ''}${p.div > 1 ? ` · ÷${p.div}` : ''}</span></div>
+        <span class="small muted">${esc(p.catId ? catNome(p.catId, p.subId) : 'Sem categoria')} · ${esc(meio ? meio.nome : '')} · ${esc(p.data === hoje() ? 'hoje' : dataCurta(p.data))}${p.parcelas > 1 ? ` · ${p.parcelas}x` : ''}${p.div > 1 ? ` · ÷${p.div}` : ''}${p.espolio ? ' · espólio' : ''}</span></div>
         <span class="val num">${p.valor ? brl(p.valor) : '—'}</span></div>
-      ${f ? `<span class="tiny muted">Entra na fatura que vence em ${dataCurta(f.vence)}</span>` : ''}
+      ${f ? `<span class="tiny muted">${p.parcelas > 1 ? `Cada parcela conta no mês da fatura: de ${mesCurto(f.ref)} a ${mesCurto(E.fatura(meio, p.data, p.parcelas - 1).ref)}` : `Conta como gasto na data da compra · fatura que vence em ${dataCurta(f.vence)}`}</span>` : ''}
       <div class="btns" style="grid-template-columns:1fr 1fr auto"><button class="btn pri" data-act="quick-save" ${!p.valor || !p.catId ? 'disabled' : ''}>${ic('check')}Salvar</button>
         <button class="btn" data-act="quick-edit">Ajustar</button><button class="btn ghost" data-act="quick-cancel" aria-label="Descartar">${ic('x')}</button></div>
     </div>`;
@@ -418,6 +433,8 @@
     if (f === 'entradas') occ = occ.filter((o) => o.tipo === 'receita');
     if (f === 'fixos') occ = occ.filter((o) => o.fixo);
     if (f === 'divididos') occ = occ.filter((o) => o.div > 1);
+    if (f === 'parcelas') occ = occ.filter((o) => o.parcela);
+    if (f === 'espolio') occ = occ.filter((o) => o.espolio);
     if (S.ui.lancCat) occ = occ.filter((o) => o.catId === S.ui.lancCat.catId && (!S.ui.lancCat.subId || o.subId === S.ui.lancCat.subId));
     if (busca) occ = occ.filter((o) => E.normKey(`${o.desc} ${catNome(o.catId, o.subId)} ${(meioById(o.meioId) || {}).nome || ''} ${o.obs}`).includes(busca));
     const groups = new Map();
@@ -432,7 +449,7 @@
       ${D().inicioAcomp && ym < D().inicioAcomp ? `<div class="hint">${ic('info')}<span>Meses antes de ${esc(mesNome(D().inicioAcomp))} não entram nos relatórios. Os lançamentos ficam aqui e contam nas faturas.</span></div>` : ''}
       <div class="kpis"><div class="kpi"><span>Gastos</span><strong>${brl(r.gastoReal + r.gastoPrev)}</strong></div><div class="kpi"><span>Entradas</span><strong>${brl(r.rendaReal + r.rendaPrev)}</strong></div><div class="kpi"><span>Fixos</span><strong>${brl(r.fixos)}</strong></div></div>
       <label class="search">${ic('search')}<span class="sr">Buscar</span><input id="busca" type="search" placeholder="Buscar descrição, categoria ou cartão" value="${esc(S.ui.busca)}" autocomplete="off"></label>
-      <div class="chips">${chip('tudo', 'Tudo')}${chip('gastos', 'Gastos')}${chip('entradas', 'Entradas')}${chip('fixos', 'Fixos')}${chip('divididos', 'Divididos')}
+      <div class="chips">${chip('tudo', 'Tudo')}${chip('gastos', 'Gastos')}${chip('entradas', 'Entradas')}${chip('fixos', 'Fixos')}${chip('parcelas', 'Parcelas')}${chip('espolio', 'Espólio')}${chip('divididos', 'Divididos')}
         ${S.ui.lancCat ? `<button class="chip" aria-pressed="true" data-act="clear-cat">${esc(S.ui.lancCat.subId ? subSo(S.ui.lancCat.catId, S.ui.lancCat.subId) : catSo(S.ui.lancCat.catId))} ${ic('x').replace('<svg', '<svg style="width:14px;height:14px"')}</button>` : ''}</div>
       ${banners()}
       ${list || `<div class="card">${emptyState('Nada por aqui', busca || f !== 'tudo' || S.ui.lancCat ? 'Nenhum lançamento com esse filtro neste mês.' : 'Nenhum lançamento neste mês ainda.', '<button class="btn pri sm" data-act="new">Lançar agora</button>')}</div>`}
@@ -476,7 +493,7 @@
       <section class="section"><div class="sec-h"><h2>Próximas faturas</h2><span class="tiny muted">toque numa barra</span></div>
         <div class="card"><div class="chart" data-chart="fut" style="height:170px"></div><p class="tiny muted" style="margin:6px 0 0">Já inclui parcelas e gastos fixos programados.</p></div></section>
       <section class="section"><div class="sec-h"><h2>Itens da fatura</h2><span class="small muted">${its.length}</span></div>
-        <div class="card list" style="padding-block:2px">${its.length ? its.map((o) => occRow(o, { noDim: true })).join('') : emptyState('Fatura vazia', 'Nenhum lançamento neste cartão para esta fatura.')}</div></section>
+        <div class="card list" style="padding-block:2px">${its.length ? its.map((o) => faturaRow(o)).join('') : emptyState('Fatura vazia', 'Nenhum lançamento neste cartão para esta fatura.')}</div></section>
     </div>`;
   }
 
@@ -527,8 +544,12 @@
     const gastoAll = meses12.map((ym) => Math.max(0, E.sum(d.occV.filter((o) => o.comp === ym), E.liquido)));
     S.charts.rxg = { kind: 'group', months: meses12, series: [{ name: 'Entradas', color: 'var(--s2)', values: rendaM }, { name: 'Gastos', color: 'var(--accent)', values: gastoAll }], sel: ate, act: 'rel-mes', labels: meses12.map((m) => MES3[+m.slice(5) - 1]) };
     const fixM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.fixo), (o) => o.minha));
-    const varM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && !o.fixo), (o) => o.minha));
-    S.charts.fxv = { kind: 'stack', months: meses12, series: [{ name: 'Fixos', color: 'var(--accent)', values: fixM }, { name: 'Variáveis', color: 'var(--s2)', values: varM }], sel: ate, act: 'rel-mes', labels: meses12.map((m) => MES3[+m.slice(5) - 1]) };
+    const parM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.parcela), (o) => o.minha));
+    const varM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && !o.fixo && !o.parcela), (o) => o.minha));
+    S.charts.fxv = { kind: 'stack', months: meses12, series: [{ name: 'Fixos', color: 'var(--accent)', values: fixM }, { name: 'Parcelas', color: 'var(--coin)', values: parM }, { name: 'Avulsos', color: 'var(--s2)', values: varM }], sel: ate, act: 'rel-mes', labels: meses12.map((m) => MES3[+m.slice(5) - 1]) };
+    // Espólio
+    const esp = gastos.filter((o) => o.espolio);
+    const espCats = E.porCategoria(esp, categorias());
     // Forma de pagamento
     const porMeio = new Map(); for (const o of gastos) porMeio.set(o.meioId, (porMeio.get(o.meioId) || 0) + o.minha);
     const meioRows = [...porMeio.entries()].sort((a, b) => b[1] - a[1]);
@@ -559,9 +580,13 @@
       <section class="section"><div class="sec-h"><h2>Entradas × gastos</h2></div>
         <div class="card stack" style="gap:10px"><div class="chart" data-chart="rxg" style="height:200px"></div>
         <div class="legend"><span><i style="background:var(--s2)"></i>Entradas</span><span><i style="background:var(--accent)"></i>Gastos</span></div></div></section>
-      <section class="section"><div class="sec-h"><h2>Fixos × variáveis</h2></div>
+      <section class="section"><div class="sec-h"><h2>Fixos, parcelas e avulsos</h2></div>
         <div class="card stack" style="gap:10px"><div class="chart" data-chart="fxv" style="height:200px"></div>
-        <div class="legend"><span><i style="background:var(--accent)"></i>Fixos</span><span><i style="background:var(--s2)"></i>Variáveis</span></div></div></section>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Fixos</span><span><i style="background:var(--coin)"></i>Parcelas</span><span><i style="background:var(--s2)"></i>Avulsos</span></div></div></section>
+      ${esp.length ? `<section class="section"><div class="sec-h"><h2>Espólio</h2><span class="tiny muted">${esc(perTxt)}</span></div>
+        <div class="card stack" style="gap:8px"><div class="row between small"><span class="ink2">Sua parte nos custos do espólio</span><b class="num">${brl(E.sum(esp, (o) => o.minha))}</b></div>
+        ${espCats.map((c) => `<div class="row between small"><span class="ink2">${esc(catSo(c.catId))}</span><span class="num">${brl(c.total)}</span></div>`).join('')}
+        <button class="btn sm" data-act="go-espolio">Ver lançamentos do espólio</button></div></section>` : ''}
       ${div.length ? `<section class="section"><div class="sec-h"><h2>Gastos divididos</h2></div>
         <div class="card stack" style="gap:8px"><div class="row between small"><span class="ink2">Você pagou</span><b class="num">${brl(pago)}</b></div>
         <div class="row between small"><span class="ink2">Sua parte (entra nos relatórios)</span><b class="num">${brl(minha)}</b></div>
@@ -711,14 +736,18 @@
   function viewSobre() {
     return `<div class="stack"><div class="logo-xl">${LOGO()}${WORD}<span class="small muted">seu dinheiro, um dia de cada vez · versão ${VERSION}</span></div>
       <div class="card stack small ink2" style="gap:10px">
-        <p style="margin:0"><b style="color:var(--ink)">Lançar.</b> Escreva do seu jeito: "supernosso 312,40", "gasolina 200 pix ontem", "capacete 900 c6 3x", "conta de luz 230 dividido por 5". O app entende valor, data, cartão, parcelas e divisão.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Lançar.</b> Escreva do seu jeito: "supernosso 312,40", "gasolina 200 pix ontem", "capacete 900 c6 3x", "conta de luz 230 dividido por 5", "advogada 400 pix espólio". O app entende valor, data, cartão, parcelas, divisão e espólio.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Quando um gasto conta.</b> À vista (cartão, Pix, débito): no dia. Parcelado no cartão: cada parcela é gasto do mês da fatura que a cobra, desde o dia 1º desse mês. Fixos: desde o dia 1º de cada mês. Assim você começa o mês sabendo quanto já deve.</p>
         <p style="margin:0"><b style="color:var(--ink)">Categorias.</b> Primeiro ele procura no que já aprendeu com você, depois num dicionário de lojas e serviços. Quando você corrige, ele memoriza.</p>
         <p style="margin:0"><b style="color:var(--ink)">Faturas.</b> Compras feitas antes do dia de fechamento entram na fatura do mês; a partir do dia de fechamento, na seguinte. Parcelas caem uma em cada fatura.</p>
-        <p style="margin:0"><b style="color:var(--ink)">Fixos.</b> Entram sozinhos no dia 1º de cada mês. Ressarcimentos fixos abatem do quanto você gastou.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Fixos.</b> Gastos de contrato, com o mesmo valor todo mês (internet, streaming, academia). Entram sozinhos; para cartão, o dia da cobrança define a fatura.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Espólio.</b> Marque ao lançar. Não divide nada sozinho: só separa esses custos nos relatórios. Para dividir, use o botão Dividido.</p>
         <p style="margin:0"><b style="color:var(--ink)">Divididos.</b> Você lança o valor cheio que pagou. Nos relatórios entra só a sua parte, e o resto vai para "A receber".</p>
         <p style="margin:0"><b style="color:var(--ink)">Média.</b> A linha de média aparece depois de dois meses completos lançados e usa até os últimos 12 meses.</p>
         <p style="margin:0"><b style="color:var(--ink)">Seus dados.</b> Ficam numa planilha Google sua. O site só tem o programa; sem a sua chave, ninguém vê nada.</p>
-      </div></div>`;
+      </div>
+      <div class="card stack small ink2" style="gap:8px"><b style="color:var(--ink)">Programa da planilha ${S.server && S.server.versao ? `(versão ${esc(S.server.versao)})` : ''}</b>
+        ${temRecurso('espolio') ? '<p style="margin:0">Atualizado.</p>' : `<p style="margin:0">Desatualizado. Para atualizar: abra a planilha › Extensões › Apps Script › arquivo Código.gs › apague tudo e cole o programa novo › Salvar › Implantar › Gerenciar implantações › lápis › Versão: Nova versão › Implantar. O endereço do app continua o mesmo.</p>`}</div></div>`;
   }
 
   // ---------- Relatório completo (para salvar em PDF) ----------
@@ -778,8 +807,10 @@
     const comprometido = E.monthsBetween(E.addMonthsYM(ymT, 1), E.addMonthsYM(ymT, 6)).map((ym) => ({ ym,
       parcelas: E.sum(futuras.filter((o) => o.comp === ym), (o) => o.minha),
       fixos: E.sum(d.occ.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.fixo), (o) => o.minha) }));
-    // divididos
+    // divididos e espólio
     const div = g.filter((o) => o.div > 1);
+    const esp = g.filter((o) => o.espolio);
+    const espCats = E.porCategoria(esp, categorias());
     const recPend = E.sum(occ.filter((o) => (o.tipo === 'despesa' || o.tipo === 'ressarcimento') && o.receber > 0 && !o.recebido), (o) => o.receber);
     // entradas e Airbnb
     const fontes = new Map(); for (const o of rendas) { const k = o.subId || 'outras'; fontes.set(k, (fontes.get(k) || 0) + o.valor); }
@@ -791,7 +822,7 @@
     const airMelhor = airMes.slice().sort((a, b) => b.v - a.v)[0];
     const mesesCompletosPer = meses.filter((ym) => d.completos.includes(ym));
     return { de, ate, meses, occ, g, avulsos, bruto, totRess, liquido, renda, porMes, cats, semana, faixas, porDia, totalDias, diasComGasto, topDia,
-      freq, top, meiosT, fixosAtivos, fixoMes, parcAtivas: [...parcAtivas.values()].sort((a, b) => (a.fim < b.fim ? 1 : -1)), comprometido, div, recPend,
+      freq, top, meiosT, fixosAtivos, fixoMes, parcAtivas: [...parcAtivas.values()].sort((a, b) => (a.fim < b.fim ? 1 : -1)), comprometido, div, recPend, esp, espCats,
       fontes, air, airMes, airCustos, airTotal, airMelhor, mesesCompletosPer, media: d.media, t };
   }
   function insights(R) {
@@ -862,11 +893,14 @@
         <section class="rp-sec"><h2>Gastos fixos</h2><p class="small ink2">${R.fixosAtivos.length} fixos ativos. Sua parte: <b>${brl(R.fixoMes)}</b> por mês, <b>${brl(R.fixoMes * 12)}</b> por ano.</p>
           <table class="t rp-t"><thead><tr><th>Fixo</th><th>Forma</th><th>Mensal</th><th>Sua parte</th><th>Até</th></tr></thead><tbody>${R.fixosAtivos.map(({ r, v }) => `<tr><td>${esc(r.desc)}${r.tipo === 'ressarcimento' ? ' <small>(ressarcimento)</small>' : r.tipo === 'receita' ? ' <small>(entrada)</small>' : ''}</td><td>${esc((meioById(r.meioId) || {}).nome || '')}</td><td>${brl(v)}</td><td>${r.tipo === 'despesa' ? brl(Math.round(v / (r.div || 1))) : '—'}</td><td>${r.fim ? mesCurto(r.fim) : 'sem fim'}</td></tr>`).join('')}</tbody></table></section>
         <section class="rp-sec"><h2>Compras parceladas e compromisso futuro</h2>
-          ${R.parcAtivas.length ? `<table class="t rp-t"><thead><tr><th>Compra</th><th>Cartão</th><th>Parcela</th><th>Faltam</th><th>A pagar</th><th>Última</th></tr></thead><tbody>${R.parcAtivas.map((x) => `<tr><td>${esc(x.desc)}</td><td>${esc((meioById(x.meioId) || {}).nome || '')}</td><td>${brl(x.valor)}</td><td>${x.restantes}</td><td>${brl(x.falta)}</td><td>${mesCurto(x.fim)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Nenhuma compra parcelada ativa.</p>'}
+          ${R.parcAtivas.length ? `<table class="t rp-t"><thead><tr><th>Compra</th><th>Cartão</th><th>Parcela</th><th>Faltam</th><th>A pagar</th><th>Última</th></tr></thead><tbody>${R.parcAtivas.map((x) => `<tr><td>${esc(x.desc)}</td><td>${esc((meioById(x.meioId) || {}).nome || '')}</td><td>${brl(x.valor)}</td><td>${x.restantes} de ${x.total}</td><td>${brl(x.falta)}</td><td>${mesCurto(x.fim)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Nenhuma compra parcelada ativa.</p>'}
           <h3>Próximos 6 meses já comprometidos (sua parte)</h3>${hb(R.comprometido.map((x) => ({ l: cap(mesNome(x.ym)), v: x.fixos + x.parcelas, extra: x.parcelas ? `parcelas ${brl(x.parcelas)}` : '' })))}</section>
         <section class="rp-sec rp-2col"><div><h2>Formas de pagamento</h2>${hb([...R.meiosT.entries()].sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ l: esc((meioById(id) || { nome: 'Outro' }).nome), v, extra: `${pct(v, E.sum([...R.meiosT.values()]))}%` })), { cor: 'var(--s2)' })}</div>
           <div><h2>Família e divididos</h2><p class="small ink2">Você pagou ${brl(E.sum(R.div, (o) => o.valor))} em gastos divididos; a sua parte foi ${brl(E.sum(R.div, (o) => o.minha))}.</p>
           <p class="small ink2">Ressarcimentos no período: ${brl(R.totRess)}.</p><p class="small ink2">Ainda a receber: <b>${brl(R.recPend)}</b>.</p></div></section>
+        ${R.esp.length ? `<section class="rp-sec"><h2>Espólio</h2><p class="small ink2">Sua parte nos custos do espólio no período: <b>${brl(E.sum(R.esp, (o) => o.minha))}</b>${E.sum(R.esp, (o) => o.valor) !== E.sum(R.esp, (o) => o.minha) ? ` (do total pago de ${brl(E.sum(R.esp, (o) => o.valor))})` : ''}.</p>
+          ${hb(R.espCats.map((c) => ({ l: esc(catSo(c.catId)), v: c.total, extra: `${pct(c.total, E.sum(R.esp, (o) => o.minha))}%` })))}
+          <table class="t rp-t"><thead><tr><th>Mês</th><th>Lançamento</th><th>Pago</th><th>Sua parte</th></tr></thead><tbody>${R.esp.slice().sort((a, b) => (a.comp === b.comp ? (a.data < b.data ? -1 : 1) : a.comp < b.comp ? -1 : 1)).map((o) => `<tr><td>${mesCurto(o.comp)}</td><td>${esc(o.desc)}${o.parcela ? ` (${o.parcela[0]}/${o.parcela[1]})` : ''}</td><td>${brl(o.valor)}</td><td>${brl(o.minha)}</td></tr>`).join('')}</tbody></table></section>` : ''}
         <section class="rp-sec"><h2>Entradas</h2>${R.renda ? hb([...R.fontes.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ l: fontesNomes[k] || esc(subSo('renda', k) || k), v, extra: `${pct(v, R.renda)}%` })), { cor: 'var(--s2)' }) : '<p class="small muted">Nenhuma entrada lançada no período.</p>'}</section>
         <section class="rp-sec rp-air"><h2>Airbnb: a sua outra fonte de renda</h2>
           ${R.airTotal ? `<div class="rp-kpis"><div><span>Recebido</span><b>${brl(R.airTotal)}</b></div><div><span>Recebimentos</span><b>${R.air.length}</b></div>
@@ -887,16 +921,50 @@
     if (!m) throw new Error('Não encontrei o bloco. Ele começa com TODODIA1:');
     let obj;
     try { const bytes = unb64u(m[1]); obj = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new Error('O bloco está incompleto. Copie de novo, do começo ao fim.'); }
+    // categorias novas (lista completa) valem já para conferir os itens do próprio bloco
+    let cats = null;
+    if (obj.categorias) {
+      const ok = Array.isArray(obj.categorias) && obj.categorias.every((c) => c && /^[a-z0-9-]{2,40}$/.test(c.id) && c.nome && Array.isArray(c.subs) && c.subs.length && c.subs.every((x) => x && /^[a-z0-9-]{1,40}$/.test(x.id) && x.nome));
+      if (!ok || !E.findSub(obj.categorias, 'outros', 'indefinido')) throw new Error('As categorias do bloco estão incompletas.');
+      cats = obj.categorias;
+    }
+    const catsUsar = cats || categorias();
+    const precisaRecurso = (obj.itens || []).some((x) => x.espolio || x.parcelaIni > 1) || (obj.recat || []).some((x) => x.espolio);
+    if (precisaRecurso && !temRecurso('espolio')) throw new Error('Antes de importar, atualize o programa da planilha (Ajustes › Sobre o Todo dIA mostra como). Sem isso, a marcação de espólio e as parcelas antigas se perdem.');
     const itens = (obj.itens || []).map((x, i) => {
       const it = { id: String(x.id || uid('I')), tipo: x.tipo || 'despesa', desc: String(x.desc || '').slice(0, 120), valor: Math.round(Number(x.valor)), data: String(x.data || ''),
         meioId: String(x.meioId || ''), catId: x.catId || 'outros', subId: x.subId || 'indefinido', parcelas: Math.max(1, Math.min(48, Math.round(Number(x.parcelas) || 1))), div: Math.max(1, Math.round(Number(x.div) || 1)), obs: String(x.obs || ''), fonteCat: 'importado' };
+      if (x.espolio) it.espolio = true;
+      if (Number(x.parcelaIni) > 1) it.parcelaIni = Math.min(48, Math.round(Number(x.parcelaIni)));
       if (!/^[A-Za-z0-9_-]{4,60}$/.test(it.id)) throw new Error(`Item ${i + 1}: identificador inválido.`);
       if (!(it.valor > 0)) throw new Error(`Item ${i + 1} (${it.desc}): valor inválido.`);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(it.data)) throw new Error(`Item ${i + 1} (${it.desc}): data inválida.`);
       if (!meioById(it.meioId)) throw new Error(`Item ${i + 1} (${it.desc}): forma de pagamento "${it.meioId}" não existe no seu app.`);
-      if (!E.findSub(categorias(), it.catId, it.subId)) { it.catId = 'outros'; it.subId = 'indefinido'; }
+      if (!E.findSub(catsUsar, it.catId, it.subId)) { it.catId = 'outros'; it.subId = 'indefinido'; }
       return it;
     });
+    // recategorizar o que já existe (lançamentos e fixos fora do bloco)
+    const noBloco = new Set(itens.map((i) => i.id));
+    const recatItens = [], recatFixos = [];
+    for (const rc of obj.recat || []) {
+      if (!rc || !rc.de || !rc.para || !E.findSub(catsUsar, rc.para.catId, rc.para.subId)) throw new Error('Uma regra de recategorização está inválida.');
+      const bate = (x) => x.catId === rc.de.catId && (!rc.de.subId || x.subId === rc.de.subId);
+      const aplica = (x) => { const y = clone(x); y.catId = rc.para.catId; y.subId = rc.para.subId; if (rc.espolio) y.espolio = true; if (rc.semDivisao) y.div = 1; return y; };
+      for (const it of atuais) if (!it.excluido && !noBloco.has(it.id) && bate(it) && !recatItens.some((z) => z.id === it.id)) recatItens.push(aplica(it));
+      for (const r of S.recorrentes) if (!r.excluido && bate(r) && !recatFixos.some((z) => z.id === r.id)) recatFixos.push(aplica(r));
+    }
+    // regras aprendidas: acrescenta, troca ou apaga (null)
+    let regras = null;
+    if (obj.regras && typeof obj.regras === 'object') {
+      regras = clone(S.cfg.regras || {});
+      for (const [k, v] of Object.entries(obj.regras)) {
+        if (v === null) { delete regras[k]; continue; }
+        if (!v || !E.findSub(catsUsar, v.catId, v.subId)) continue;
+        const r = { catId: v.catId, subId: v.subId, meioId: v.meioId && meioById(v.meioId) ? v.meioId : null, n: (regras[k] && regras[k].n) || 1, at: Date.now() };
+        if (v.espolio) r.espolio = true;
+        regras[k] = r;
+      }
+    }
     const fixos = (obj.fixos || []).map((f) => {
       const r = S.recorrentes.find((x) => x.id === f.id && !x.excluido);
       if (!r) { if (f.excluir) return null; throw new Error(`Fixo "${f.id}" não existe no seu app.`); }
@@ -915,7 +983,8 @@
       if (k === 'inicioUso' && /^\d{4}-\d{2}-\d{2}$/.test(v)) prefs.inicioUso = v;
     }
     const apagar = (obj.apagar || []).map((id) => atuais.find((x) => x.id === String(id) && !x.excluido)).filter(Boolean);
-    return { itens, fixos, meios: meiosP, prefs, apagar, titulo: obj.titulo || 'Importação' };
+    const fixosExcl = new Set(fixos.filter((f) => f.excluir).map((f) => f.r.id));
+    return { itens, fixos, meios: meiosP, prefs, apagar, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
   }
   function viewImportar() {
     const p = S.ui.imp;
@@ -928,6 +997,9 @@
         ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : `${esc(k)} = ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
+        ${p.ok.cats ? `<div class="hint">${ic('tag')}<span>Categorias atualizadas (${p.ok.cats.length} categorias).</span></div>` : ''}
+        ${p.ok.recatItens.length + p.ok.recatFixos.length ? `<div class="hint">${ic('tag')}<span>Mudam de categoria: ${[...p.ok.recatItens, ...p.ok.recatFixos].map((x) => esc(x.desc)).join(', ')}.</span></div>` : ''}
+        ${p.ok.regras ? `<div class="hint">${ic('tag')}<span>Palavras aprendidas ajustadas.</span></div>` : ''}
         <div class="row between small"><span class="ink2">${p.ok.itens.length} lançamentos</span><b>${brl(tot)}</b></div>
         <button class="btn pri" data-act="imp-ok">${ic('check')}Importar</button></div>`;
     }
@@ -963,9 +1035,9 @@
     const base = edit ? clone(edit) : {
       id: uid(), tipo: pre.tipo || 'despesa', desc: pre.desc || '', valor: pre.valor || 0, data: pre.data || t,
       meioId: pre.meioId || meioPadrao(), catId: pre.catId || null, subId: pre.subId || null,
-      parcelas: pre.parcelas || 1, div: pre.div || 1, obs: '', fonteCat: pre.fonte || null,
+      parcelas: pre.parcelas || 1, div: pre.div || 1, obs: '', fonteCat: pre.fonte || null, espolio: !!pre.espolio,
     };
-    sheetState = { kind: 'lanc', it: base, prevYm: edit ? E.ymOf(edit.data) : null, isEdit: !!edit, catManual: !!(edit || pre.catId), divManual: !!(edit || pre.div > 1), err: '' };
+    sheetState = { kind: 'lanc', it: base, prevYm: edit ? E.ymOf(edit.data) : null, isEdit: !!edit, catManual: !!(edit || pre.catId), divManual: !!(edit || pre.div > 1), espManual: !!(edit || pre.espolio), err: '' };
     if (!base.catId && base.desc) autoCat(true);
     renderLanc();
     setTimeout(() => { const el = $(edit || pre.valor ? '#fDesc' : '#fValor'); if (el && !edit) el.focus(); }, 60);
@@ -994,11 +1066,13 @@
         <button class="catbtn" data-act="l-cat"><span class="mono">${it.catId ? esc(iniciais(catSo(it.catId))) : ic('tag')}</span><span class="grow"><b>${sub ? esc(sub.nome) : 'Escolher categoria'}</b><span>${it.catId ? esc(catSo(it.catId)) : 'Escreva a descrição que eu sugiro'}</span></span>
         ${it.fonteCat === 'regra' ? '<span class="pill acc">aprendido</span>' : ''}${ic('right', 'chev')}</button></div>
       <div class="field"><span class="lbl">${isIn ? 'Entrou em' : 'Pago com'}</span><div class="chips">${meiosOk.map((m) => `<button class="chip" style="--cc:${esc(m.cor || 'var(--muted)')}" data-act="l-meio" data-id="${esc(m.id)}" aria-pressed="${m.id === it.meioId}"><i></i>${esc(m.nome)}</button>`).join('')}</div>
-        ${f ? `<div class="hint">${ic('card')}<span>${it.parcelas > 1 ? `${it.parcelas}x de ${brl(parc)}: primeira na fatura que vence ${dataCurta(f.vence)}, última em ${dataCurta(fLast.vence)}/${fLast.vence.slice(2, 4)}.` : `Cai na fatura que vence em ${dataCurta(f.vence)} (fecha ${dataCurta(f.fecha)}).`}</span></div>` : ''}</div>
+        ${f ? `<div class="hint">${ic('card')}<span>${it.parcelas > 1 ? `${it.parcelas}x de ${brl(parc)}. Cada parcela conta como gasto no mês da fatura que a cobra: de ${mesCurto(f.ref)} a ${mesCurto(fLast.ref)}.` : `Conta como gasto ${it.data === t ? 'hoje' : 'nesta data'} e cai na fatura que vence em ${dataCurta(f.vence)} (fecha ${dataCurta(f.fecha)}).`}</span></div>` : ''}
+        ${st.isEdit && it.parcelaIni > 1 ? `<div class="hint">${ic('info')}<span>Compra antiga: aqui estão as parcelas ${it.parcelaIni} a ${it.parcelaIni + it.parcelas - 1} de ${it.parcelaIni + it.parcelas - 1}. As anteriores já foram pagas.</span></div>` : ''}</div>
       <div class="field"><span class="lbl">${credit ? 'Data da compra' : 'Data'}</span><div class="row" style="flex-wrap:wrap">
         <button class="chip" data-act="l-data" data-v="${t}" aria-pressed="${it.data === t}">Hoje</button><button class="chip" data-act="l-data" data-v="${ontem}" aria-pressed="${it.data === ontem}">Ontem</button>
         <input class="inp" type="date" id="fData" value="${esc(it.data)}" style="width:auto;flex:1;min-width:150px;padding:9px 12px" aria-label="Data"></div>
         <span class="tiny muted">${esc(dataLonga(it.data))}${it.data > t ? ' · data futura, entra como previsto' : ''}</span></div>
+      ${!isIn ? `<div class="toggle espolio"><span><b>Espólio</b><br><span class="small muted">${it.espolio ? 'Marcado: aparece separado nos relatórios' : 'Marque se é um custo do espólio'}</span></span><button class="switch" role="switch" aria-checked="${!!it.espolio}" data-act="l-esp" aria-label="Espólio"></button></div>` : ''}
       <details class="more" ${it.parcelas > 1 || it.div > 1 || it.obs ? 'open' : ''}><summary>Parcelas, divisão e observação ${ic('down')}</summary><div class="more-in">
         ${credit ? `<div class="toggle"><span><b>Parcelas</b><br><span class="small muted">${it.parcelas > 1 ? `${it.parcelas}x de ${brl(parc)}` : 'À vista'}</span></span><span class="stepper"><button data-act="l-parc" data-d="-1" aria-label="Menos parcelas">−</button><output>${it.parcelas}x</output><button data-act="l-parc" data-d="1" aria-label="Mais parcelas">+</button></span></div>` : ''}
         ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${it.div > 1 ? `Sua parte ${brl(minha)} · a receber ${brl(it.valor - minha)}` : 'Você paga e outras pessoas te devolvem'}</span></span><button class="switch" role="switch" aria-checked="${it.div > 1}" data-act="l-div" aria-label="Dividido"></button></div>
@@ -1039,6 +1113,7 @@
         st.it.catId = res.catId; st.it.subId = res.subId; st.it.fonteCat = res.fonte;
         const sd = E.findSub(categorias(), res.catId, res.subId);
         if (!st.divManual) st.it.div = sd && sd.div > 1 ? sd.div : 1;
+        if (!st.espManual && st.it.tipo === 'despesa' && !!res.espolio !== !!st.it.espolio) { st.it.espolio = !!res.espolio; renderLanc(); }
         if (res.meioId && !st.meioManual && meioById(res.meioId) && meioById(res.meioId).ativo !== false) st.it.meioId = res.meioId;
         if (changed) renderLanc();
       }
@@ -1057,7 +1132,7 @@
     if (it.tipo === 'receita') { it.div = 1; it.parcelas = 1; }
     const item = clone(it); const prevYm = st.prevYm; const wasEdit = st.isEdit;
     const meio = meioById(item.meioId);
-    learn(item.desc, item.catId, item.subId, item.meioId);
+    learn(item.desc, item.catId, item.subId, item.meioId, item.tipo === 'despesa' && item.espolio);
     vibrate();
     if (more) { openLanc({ meioId: item.meioId, data: item.data, tipo: item.tipo }); } else closeSheet();
     const ok = await saveItem(item, prevYm, { silent: false });
@@ -1139,9 +1214,10 @@
       ${mudou ? `<div class="field"><label for="rDesde">O novo valor vale a partir de</label><input class="inp" type="month" id="rDesde" value="${esc(st.desde)}"><span class="tiny muted">Os meses anteriores continuam com o valor antigo.</span></div>` : ''}
       <div class="field"><span class="lbl">Categoria</span><button class="catbtn" data-act="r-cat"><span class="mono">${r.catId ? esc(iniciais(catSo(r.catId))) : ic('tag')}</span><span class="grow"><b>${sub ? esc(sub.nome) : 'Escolher categoria'}</b><span>${r.catId ? esc(catSo(r.catId)) : ''}</span></span>${ic('right', 'chev')}</button></div>
       <div class="field"><span class="lbl">${isIn ? 'Entra em' : 'Cobrado em'}</span><div class="chips">${meiosOk.map((m) => `<button class="chip" style="--cc:${esc(m.cor || 'var(--muted)')}" data-act="r-meio" data-id="${esc(m.id)}" aria-pressed="${m.id === r.meioId}"><i></i>${esc(m.nome)}</button>`).join('')}</div></div>
-      <div class="toggle"><span><b>Dia do mês</b><br><span class="small muted">Para cartão, define a fatura</span></span><span class="stepper"><button data-act="r-dia" data-d="-1" aria-label="Dia anterior">−</button><output>${r.dia}</output><button data-act="r-dia" data-d="1" aria-label="Próximo dia">+</button></span></div>
+      <div class="toggle"><span><b>Dia do mês</b><br><span class="small muted">${isIn ? 'Dia em que entra' : 'Dia da cobrança (define a fatura). O gasto conta desde o dia 1º'}</span></span><span class="stepper"><button data-act="r-dia" data-d="-1" aria-label="Dia anterior">−</button><output>${r.dia}</output><button data-act="r-dia" data-d="1" aria-label="Próximo dia">+</button></span></div>
       ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${r.div > 1 ? `Sua parte ${brl(Math.round(st.valor / r.div))}` : 'Você paga e a família devolve'}</span></span><button class="switch" role="switch" aria-checked="${r.div > 1}" data-act="r-div" aria-label="Dividido"></button></div>
         ${r.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas</span><span class="stepper"><button data-act="r-divn" data-d="-1" aria-label="Menos">−</button><output>${r.div}</output><button data-act="r-divn" data-d="1" aria-label="Mais">+</button></span></div>` : ''}` : ''}
+      ${r.tipo === 'despesa' ? `<div class="toggle espolio"><span><b>Espólio</b><br><span class="small muted">${r.espolio ? 'Marcado: aparece separado nos relatórios' : 'Marque se é um custo do espólio'}</span></span><button class="switch" role="switch" aria-checked="${!!r.espolio}" data-act="r-esp" aria-label="Espólio"></button></div>` : ''}
       <div class="row" style="gap:10px"><div class="field grow"><label for="rIni">Começa em</label><input class="inp" type="month" id="rIni" value="${esc(r.inicio)}"></div>
         <div class="field grow"><label for="rFim">Termina em (opcional)</label><input class="inp" type="month" id="rFim" value="${esc(r.fim || '')}"></div></div>
       ${st.err ? `<p class="err" role="alert">${esc(st.err)}</p>` : ''}
@@ -1458,6 +1534,7 @@
     if (tipo === 'receita' && meioById(parsed.meioId) && meioById(parsed.meioId).tipo === 'credito') parsed.meioId = (meiosAtivos().find((m) => m.tipo === 'pix') || meiosAtivos().find((m) => m.tipo !== 'credito') || {}).id;
     if (parsed.catId && parsed.div === 1) { const sd = E.findSub(categorias(), parsed.catId, parsed.subId); if (sd && sd.div > 1) parsed.div = sd.div; }
     if (parsed.parcelas > 1 && !(meioById(parsed.meioId) && meioById(parsed.meioId).tipo === 'credito')) parsed.parcelas = 1;
+    parsed.espolio = tipo === 'despesa' && !!(p.espolio || (cls && cls.espolio));
     S.ui.quick = { text, parsed };
     render();
     if (!parsed.valor || !parsed.catId) { const pre = { ...parsed }; S.ui.quick = null; S.ui.quickText = ''; render(); openLanc({ ...pre, fonte: pre.fonte }); }
@@ -1465,9 +1542,9 @@
   async function quickSave() {
     const q = S.ui.quick; if (!q) return;
     const p = q.parsed;
-    const item = { id: uid(), tipo: p.tipo, desc: p.desc || 'Sem descrição', valor: p.valor, data: p.data, meioId: p.meioId, catId: p.catId, subId: p.subId, parcelas: p.parcelas || 1, div: p.tipo === 'despesa' ? p.div || 1 : 1, obs: '', fonteCat: p.fonte };
+    const item = { id: uid(), tipo: p.tipo, desc: p.desc || 'Sem descrição', valor: p.valor, data: p.data, meioId: p.meioId, catId: p.catId, subId: p.subId, parcelas: p.parcelas || 1, div: p.tipo === 'despesa' ? p.div || 1 : 1, obs: '', fonteCat: p.fonte, espolio: p.tipo === 'despesa' && !!p.espolio };
     S.ui.quick = null; S.ui.quickText = ''; render();
-    learn(item.desc, item.catId, item.subId, item.meioId);
+    learn(item.desc, item.catId, item.subId, item.meioId, item.tipo === 'despesa' && item.espolio);
     vibrate();
     if (!(await saveItem(item, null))) return;
     toast(msgLancado(item), { label: 'Desfazer', fn: () => softDelete(item, true) });
@@ -1492,7 +1569,11 @@
       case 'imp-ler': { const txt = ($('#impTxt') || {}).value || ''; S.ui.imp = { txt }; try { S.ui.imp.ok = lerImportacao(txt); } catch (e) { S.ui.imp.err = e.message; } render(); break; }
       case 'imp-ok': {
         const p = S.ui.imp && S.ui.imp.ok; if (!p) break;
+        if (p.cats) saveCategorias(clone(p.cats));
+        if (p.regras) { S.cfg.regras = p.regras; saveConfig('regras', p.regras); }
         for (const it of p.itens) saveItem(clone(it));
+        for (const it of p.recatItens) saveItem(clone(it), null);
+        for (const r of p.recatFixos) saveRec(r);
         for (const it of p.apagar) { const r = clone(it); r.excluido = true; r.excluidoEm = Date.now(); saveItem(r, null); }
         if (Object.keys(p.prefs).length) savePrefs(p.prefs);
         if (p.meios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); saveMeios(lista); }
@@ -1517,6 +1598,7 @@
       case 'filtro': S.ui.filtro = el.dataset.f; render(); break;
       case 'clear-cat': S.ui.lancCat = null; render(); break;
       case 'toggle': S.ui.open[el.dataset.k] = !S.ui.open[el.dataset.k]; render(); break;
+      case 'go-espolio': S.ui.lancCat = null; S.ui.mes = S.ui.relMes || ymHoje(); S.ui.filtro = 'espolio'; setTab('lancamentos'); break;
       case 'go-cat': S.ui.lancCat = { catId: el.dataset.cat, subId: el.dataset.sub || null }; S.ui.mes = S.ui.tab === 'relatorios' ? S.ui.relMes : ymHoje(); S.ui.filtro = 'tudo'; setTab('lancamentos'); break;
       case 'go-card': S.ui.cardId = el.dataset.id; S.ui.faturaRef = null; setTab('cartoes'); break;
       case 'card': S.ui.cardId = el.dataset.id; S.ui.faturaRef = null; render(); break;
@@ -1535,6 +1617,7 @@
       case 'l-meio': st.it.meioId = el.dataset.id; st.meioManual = true; renderLanc(); break;
       case 'l-data': st.it.data = el.dataset.v; renderLanc(); break;
       case 'l-parc': st.it.parcelas = Math.min(48, Math.max(1, (st.it.parcelas || 1) + +el.dataset.d)); renderLanc(); break;
+      case 'l-esp': st.espManual = true; st.it.espolio = !st.it.espolio; renderLanc(); break;
       case 'l-div': st.divManual = true; st.it.div = st.it.div > 1 ? 1 : ((E.findSub(categorias(), st.it.catId, st.it.subId) || {}).div || 2); renderLanc(); break;
       case 'l-divn': st.divManual = true; st.it.div = Math.min(20, Math.max(2, st.it.div + +el.dataset.d)); renderLanc(); break;
       case 'l-cat': { const it = st.it; openCatPicker(it.tipo, (catId, subId) => { it.catId = catId; it.subId = subId; it.fonteCat = 'manual'; st.catManual = true; const sd = E.findSub(categorias(), catId, subId); if (!st.divManual) it.div = sd && sd.div > 1 ? sd.div : 1; }, { catId: it.catId, subId: it.subId }); break; }
@@ -1558,6 +1641,7 @@
       case 'r-tipo': st.r.tipo = el.dataset.v; st.r.catId = null; st.r.subId = null; if (st.r.tipo === 'receita') st.r.div = 1; renderRec(); break;
       case 'r-meio': st.r.meioId = el.dataset.id; renderRec(); break;
       case 'r-dia': st.r.dia = ((st.r.dia - 1 + +el.dataset.d + 31) % 31) + 1; renderRec(); break;
+      case 'r-esp': st.r.espolio = !st.r.espolio; renderRec(); break;
       case 'r-div': st.r.div = st.r.div > 1 ? 1 : ((E.findSub(categorias(), st.r.catId, st.r.subId) || {}).div || 2); renderRec(); break;
       case 'r-divn': st.r.div = Math.min(20, Math.max(2, st.r.div + +el.dataset.d)); renderRec(); break;
       case 'r-cat': { const r = st.r; openCatPicker(r.tipo, (c, s) => { r.catId = c; r.subId = s; const sd = E.findSub(categorias(), c, s); if (sd && sd.div > 1 && r.div === 1) r.div = sd.div; }, { catId: r.catId, subId: r.subId }); break; }

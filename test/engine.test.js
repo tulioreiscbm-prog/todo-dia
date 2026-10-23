@@ -182,11 +182,21 @@ test('expansão: parcelas, divisão, faturas e previsto', () => {
   const out = E.expandir(state, '2026-10', '2027-02', hoje);
   const tv = out.filter((o) => o.refId === 'a');
   // parcelado no cartão: cada parcela conta no mês em que a fatura vence
-  assert.deepEqual(tv.map((o) => [o.comp, o.valor, o.fatura, o.data]).sort(), [['2026-11', 100000, '2026-11', '2026-11-07'], ['2026-12', 100000, '2026-12', '2026-12-07'], ['2027-01', 100000, '2027-01', '2027-01-07']]);
+  // parcelado no cartão: cada parcela é gasto do mês da fatura e conta desde o dia 1º desse mês
+  assert.deepEqual(tv.map((o) => [o.comp, o.valor, o.fatura, o.data, o.parcela.join('/')]).sort(), [['2026-11', 100000, '2026-11', '2026-11-01', '1/3'], ['2026-12', 100000, '2026-12', '2026-12-01', '2/3'], ['2027-01', 100000, '2027-01', '2027-01-01', '3/3']]);
   assert.ok(tv.every((o) => o.dataCompra === '2026-10-22' && o.previsto));
-  // parcela restante importada da fatura (uma só): conta no mês da fatura, não no da compra
-  const imp = E.expandir({ meios: T.meios, itens: [{ id: 'IMP-x', tipo: 'despesa', desc: 'Loja (3 de 3)', valor: 10808, parcelas: 1, data: '2026-10-24', meioId: 'inter-credito', catId: 'casa', subId: 'reparos' }], recorrentes: [] }, '2026-10', '2027-02', hoje);
-  assert.deepEqual(imp.map((o) => [o.comp, o.fatura, o.data]), [['2026-11', '2026-11', '2026-11-07']]);
+  // em 1º/11 a parcela de novembro já é gasto certo
+  assert.equal(E.expandir(state, '2026-11', '2026-11', '2026-11-01').find((o) => o.refId === 'a').previsto, false);
+  // compra antiga: lançamento guarda só as parcelas restantes e mostra a numeração original
+  const imp = E.expandir({ meios: T.meios, itens: [
+    { id: 'IMP-x', tipo: 'despesa', desc: 'Loja', valor: 10808, parcelas: 1, parcelaIni: 3, data: '2026-10-24', meioId: 'inter-credito', catId: 'casa', subId: 'reparos' },
+    { id: 'IMP-y', tipo: 'despesa', desc: 'Seguro', valor: 429400, parcelas: 8, parcelaIni: 5, div: 5, espolio: true, data: '2026-10-10', meioId: 'inter-credito', catId: 'transporte', subId: 'seguro-carro' },
+  ], recorrentes: [] }, '2026-10', '2027-12', hoje);
+  assert.deepEqual(imp.filter((o) => o.refId === 'IMP-x').map((o) => [o.comp, o.fatura, o.data, o.parcela.join('/')]), [['2026-11', '2026-11', '2026-11-01', '3/3']]);
+  const sg = imp.filter((o) => o.refId === 'IMP-y');
+  assert.equal(sg.length, 8); assert.ok(sg.every((o) => o.minha === 10735 && o.receber === 42940 && o.espolio && o.parcelaAntiga));
+  assert.deepEqual([sg[sg.length - 1].parcela, sg[0].parcela, sg[0].fatura], [[5, 12], [12, 12], '2027-06']);
+  assert.equal(E.resumoMes(imp, '2026-11').espolio, 10735);
   const en = out.find((o) => o.refId === 'b');
   assert.equal(en.minha, 4600); assert.equal(en.receber, 18400);
   assert.ok(!out.some((o) => o.refId === 'd' || o.refId === 'e'));
@@ -199,6 +209,9 @@ test('expansão: parcelas, divisão, faturas e previsto', () => {
   const nov = out.filter((o) => o.comp === '2026-11' && o.fixo);
   assert.equal(nov.length, 5);
   assert.ok(nov.every((o) => o.data === '2026-11-01' && o.previsto));
+  // gasto fixo cobrado depois do dia 1º já conta como certo desde o 1º
+  const tarde = E.expandir({ meios: T.meios, itens: [], recorrentes: [{ id: 'x', desc: 'Internet', tipo: 'despesa', catId: 'casa', subId: 'internet', meioId: 'boleto', dia: 20, inicio: '2026-11', valores: [{ desde: '2026-11', valor: 1000 }] }] }, '2026-11', '2026-11', '2026-11-02');
+  assert.deepEqual([tarde[0].data, tarde[0].previsto], ['2026-11-20', false]);
   assert.equal(out.filter((o) => o.refId === 'rep').length, 3);
   const seg = out.find((o) => o.refId === 'seg' && o.comp === '2026-11');
   assert.equal(seg.minha, 10735); assert.equal(seg.receber, 42940);

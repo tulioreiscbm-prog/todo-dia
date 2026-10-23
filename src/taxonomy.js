@@ -29,7 +29,7 @@ const Taxonomy = (() => {
     { id: 'educacao', nome: 'Educação', tipo: 'despesa', subs: [
       S('cursos', 'Cursos'), S('livros', 'Livros'), S('material', 'Material') ] },
     { id: 'familia', nome: 'Família', tipo: 'despesa', subs: [
-      S('pais', 'Pais'), S('outros', 'Outros familiares') ] },
+      S('pais', 'Pais'), S('repasses', 'Repasses à família'), S('outros', 'Outros familiares') ] },
     { id: 'imoveis', nome: 'Imóveis de renda', tipo: 'despesa', subs: [
       S('manutencao', 'Manutenção'), S('airbnb', 'Custos do Airbnb'), S('taxas', 'Taxas e impostos') ] },
     { id: 'financeiro', nome: 'Taxas e impostos', tipo: 'despesa', subs: [

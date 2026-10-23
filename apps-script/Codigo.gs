@@ -8,18 +8,20 @@
  * O passo a passo completo está no README do repositório.
  */
 
-const VERSAO_SCRIPT = '2.0.0';
+const VERSAO_SCRIPT = '1.0.0';
+// o que este programa sabe guardar além do básico (o app confere antes de usar)
+const RECURSOS = ['espolio', 'parcela_inicial'];
 const ABAS = {
   lanc: {
     nome: 'Lançamentos',
     cols: ['id', 'tipo', 'data', 'descricao', 'valor', 'meio', 'categoria', 'subcategoria', 'parcelas', 'dividido_por',
-      'recebido', 'obs', 'fonte', 'criado_em', 'atualizado_em', 'excluido'],
+      'recebido', 'obs', 'fonte', 'criado_em', 'atualizado_em', 'excluido', 'espolio', 'parcela_inicial'],
     texto: ['id', 'tipo', 'data', 'descricao', 'meio', 'categoria', 'subcategoria', 'recebido', 'obs', 'fonte'],
   },
   fixos: {
     nome: 'Fixos',
     cols: ['id', 'tipo', 'descricao', 'categoria', 'subcategoria', 'meio', 'dia', 'inicio', 'fim', 'dividido_por',
-      'valores', 'excecoes', 'recebidos', 'atualizado_em', 'excluido'],
+      'valores', 'excecoes', 'recebidos', 'atualizado_em', 'excluido', 'espolio'],
     texto: ['id', 'tipo', 'descricao', 'categoria', 'subcategoria', 'meio', 'inicio', 'fim', 'valores', 'excecoes', 'recebidos'],
   },
   config: { nome: 'Config', cols: ['chave', 'valor', 'atualizado_em'], texto: ['chave', 'valor'] },
@@ -74,8 +76,20 @@ function planilha_() { return SpreadsheetApp.getActiveSpreadsheet(); }
 function aba_(ss, def) {
   const sh = ss.getSheetByName(def.nome);
   if (!sh) throw erro_('Aba "' + def.nome + '" não encontrada. Rode a função "instalar".', 'sem_instalacao');
+  garantirColunas_(sh, def);
   return sh;
 }
+// planilhas criadas por versões antigas ganham as colunas novas no fim, sem mexer no que já existe
+function garantirColunas_(sh, def) {
+  const head = (sh.getDataRange().getValues()[0] || []).map(String);
+  if (!head.length || head.every(function (h) { return h === ''; })) return;
+  const faltam = def.cols.filter(function (c) { return head.indexOf(c) < 0; });
+  if (!faltam.length) return;
+  let n = head.length;
+  while (n > 0 && head[n - 1] === '') n--;
+  sh.getRange(1, n + 1, 1, faltam.length).setValues([faltam]);
+}
+function sim_(v) { return v === true || v === 1 || String(v).toUpperCase() === 'TRUE'; }
 function linhas_(ss, def) {
   const sh = aba_(ss, def);
   const v = sh.getDataRange().getValues();
@@ -108,6 +122,8 @@ function lancDeLinha_(o) {
     parcelas: Math.max(1, num_(o.parcelas) || 1), div: Math.max(1, num_(o.dividido_por) || 1), obs: txt_(o.obs),
     fonteCat: txt_(o.fonte) || null, criadoEm: num_(o.criado_em), atualizadoEm: num_(o.atualizado_em),
   };
+  if (sim_(o.espolio)) it.espolio = true;
+  if (num_(o.parcela_inicial) > 1) it.parcelaIni = Math.round(num_(o.parcela_inicial));
   if (rec && rec.recebido) it.recebido = true;
   if (rec && rec.recebidos) it.recebidos = rec.recebidos;
   if (o.excluido === true || String(o.excluido).toUpperCase() === 'TRUE' || o.excluido === 1) { it.excluido = true; it.excluidoEm = num_(o.atualizado_em); }
@@ -120,6 +136,7 @@ function fixoDeLinha_(o) {
     inicio: ym_(o.inicio), fim: ym_(o.fim) || null, div: Math.max(1, num_(o.dividido_por) || 1),
     valores: json_(o.valores, []), excecoes: json_(o.excecoes, {}), recebidos: json_(o.recebidos, {}),
     atualizadoEm: num_(o.atualizado_em), excluido: o.excluido === true || String(o.excluido).toUpperCase() === 'TRUE',
+    espolio: sim_(o.espolio),
   };
 }
 function tudo_() {
@@ -133,6 +150,7 @@ function tudo_() {
     planilhaUrl: ss.getUrl(),
     agora: Date.now(),
     versao: VERSAO_SCRIPT,
+    recursos: RECURSOS,
   };
 }
 
@@ -146,6 +164,7 @@ function linhaDeLanc_(it) {
     categoria: it.catId || '', subcategoria: it.subId || '', parcelas: it.parcelas || 1, dividido_por: it.div || 1,
     recebido: Object.keys(rec).length ? JSON.stringify(rec) : '', obs: it.obs || '', fonte: it.fonteCat || '',
     criado_em: it.criadoEm || Date.now(), atualizado_em: it.atualizadoEm || Date.now(), excluido: !!it.excluido,
+    espolio: !!it.espolio, parcela_inicial: it.parcelaIni > 1 ? it.parcelaIni : '',
   };
 }
 function linhaDeFixo_(f) {
@@ -153,7 +172,7 @@ function linhaDeFixo_(f) {
     id: f.id, tipo: f.tipo || 'despesa', descricao: f.desc || '', categoria: f.catId || '', subcategoria: f.subId || '',
     meio: f.meioId || '', dia: f.dia || 1, inicio: f.inicio || '', fim: f.fim || '', dividido_por: f.div || 1,
     valores: JSON.stringify(f.valores || []), excecoes: JSON.stringify(f.excecoes || {}), recebidos: JSON.stringify(f.recebidos || {}),
-    atualizado_em: f.atualizadoEm || Date.now(), excluido: !!f.excluido,
+    atualizado_em: f.atualizadoEm || Date.now(), excluido: !!f.excluido, espolio: !!f.espolio,
   };
 }
 function validarLanc_(it) {

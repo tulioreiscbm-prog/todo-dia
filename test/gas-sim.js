@@ -57,6 +57,11 @@ if (require.main === module) {
   const amb = carregar([path.join(__dirname, '../apps-script/Codigo.gs'), ...extras]);
   const chave = vm.runInContext('instalar()', amb.ctx);
   amb.props.set('CHAVE', 'chave-de-teste-1234567890');
+  // ANTIGA=1: imita uma planilha criada pela versão anterior (sem as colunas novas) e um programa antigo
+  if (process.env.ANTIGA) {
+    for (const s of amb.sheets.values()) if (s.data[0]) s.data[0] = s.data[0].filter((h) => !['espolio', 'parcela_inicial'].includes(h));
+    if (process.env.ANTIGA === 'programa') vm.runInContext('RECURSOS.length = 0; garantirColunas_ = function () {};', amb.ctx);
+  }
   const srv = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }

@@ -155,6 +155,10 @@ button.card { width: 100%; }
 .li .amt small { display: block; font-weight: 500; font-size: 11.5px; color: var(--muted); }
 .li .amt.in { color: var(--good); }
 .li.dim { opacity: .62; }
+.li.fat { align-items: flex-start; }
+.li.fat .t, .li.fat .s { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.li.fat .s { margin-top: 2px; }
+.toggle.espolio { padding-block: 2px; }
 .li .chev { width: 18px; height: 18px; color: var(--muted); flex: none; }
 .day-h { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 14px 2px 4px; text-transform: capitalize; }
 

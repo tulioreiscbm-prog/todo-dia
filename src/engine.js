@@ -126,7 +126,10 @@ const Engine = (() => {
     const tok = raw.map((t) => normKey(t.replace(/^r\$/i, 'r$ ')).replace(/\s/g, '') || t.toLowerCase());
     const rawN = raw.map((t) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
     const used = new Array(raw.length).fill(false);
-    const out = { valor: null, desc: '', data: null, dataTexto: null, meioId: null, parcelas: 1, div: 1, tipoHint: null };
+    const out = { valor: null, desc: '', data: null, dataTexto: null, meioId: null, parcelas: 1, div: 1, tipoHint: null, espolio: false };
+
+    // marcação de espólio ("espolio", "espólio", "#espolio")
+    tok.forEach((t, i) => { if (/^#?espolio$/.test(t)) { out.espolio = true; used[i] = true; } });
 
     // tipo
     tok.forEach((t, i) => { if (['recebi', 'recebido', 'recebimento', 'entrada', 'receita'].includes(t)) { out.tipoHint = 'receita'; used[i] = true; } });
@@ -319,25 +322,27 @@ const Engine = (() => {
       const n = it.tipo === 'despesa' && meio && meio.tipo === 'credito' ? Math.max(1, it.parcelas || 1) : 1;
       const partes = splitParcelas(it.valor, n);
       const baseComp = ymOf(it.data);
+      // parcelaIni > 1: compra antiga cujas primeiras parcelas já foram pagas (o lançamento guarda só as restantes)
+      const ini = it.tipo === 'despesa' && it.parcelaIni > 1 ? Math.round(it.parcelaIni) : 1;
+      const total = ini - 1 + n;
       for (let k = 0; k < n; k++) {
         const f = meio && meio.tipo === 'credito' && (it.tipo === 'despesa' || it.tipo === 'ajuste') ? fatura(meio, it.data, k) : null;
-        // compra parcelada no cartão: cada parcela conta no mês em que é cobrada (vencimento da fatura).
-        // à vista: conta no dia da compra. Parcelas restantes importadas das faturas (id "IMP-") seguem a regra
-        // das parcelas mesmo quando sobra uma só.
-        const parcelado = f && it.tipo === 'despesa' && (n > 1 || /^IMP-/.test(it.id));
+        // Compra parcelada no cartão: cada parcela é gasto do mês da fatura que a cobra e já conta desde o dia 1º
+        // desse mês (é um valor certo). Compra à vista conta no dia da compra.
+        const parcelado = !!f && it.tipo === 'despesa' && total > 1;
         const comp = parcelado ? f.ref : addMonthsYM(baseComp, k);
         if (comp < de || comp > ate) continue;
         const valor = partes[k];
         const div = it.tipo === 'despesa' && it.div >= 2 ? it.div : 1;
         const minha = Math.round(valor / div);
-        const dataOc = parcelado ? f.vence : k === 0 ? it.data : clampDate(comp, parseISO(it.data).d);
+        const dataOc = parcelado ? clampDate(comp, 1) : k === 0 ? it.data : clampDate(comp, parseISO(it.data).d);
         out.push({
           key: n > 1 ? `${it.id}#${k + 1}` : it.id, origem: 'lanc', refId: it.id, tipo: it.tipo,
           desc: it.desc, catId: it.catId, subId: it.subId, meioId: it.meioId, data: dataOc, dataCompra: it.data,
           comp, valor, div, minha, receber: it.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(it.recebidos ? it.recebidos[k + 1] : it.recebido),
-          fixo: false, parcela: n > 1 ? [k + 1, n] : null, fatura: f ? f.ref : null,
-          previsto: dataOc > hoje, obs: it.obs || '',
+          fixo: false, parcela: parcelado ? [ini + k, total] : null, parcelaAntiga: ini > 1, fatura: f ? f.ref : null,
+          previsto: dataOc > hoje, obs: it.obs || '', espolio: !!it.espolio,
         });
       }
     }
@@ -351,12 +356,14 @@ const Engine = (() => {
         const div = rec.tipo === 'despesa' && rec.div >= 2 ? rec.div : 1;
         const minha = Math.round(valor / div);
         const f = meio && meio.tipo === 'credito' && (rec.tipo || 'despesa') === 'despesa' ? fatura(meio, data, 0) : null;
+        // gasto recorrente é certo: conta desde o dia 1º do mês, mesmo que a cobrança seja depois
+        const desde = (rec.tipo || 'despesa') === 'despesa' ? clampDate(ym, 1) : data;
         out.push({
           key: `rec:${rec.id}:${ym}`, origem: 'rec', refId: rec.id, tipo: rec.tipo || 'despesa',
           desc: rec.desc, catId: rec.catId, subId: rec.subId, meioId: rec.meioId, data, dataCompra: data,
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
-          fatura: f ? f.ref : null, previsto: data > hoje, obs: '',
+          fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
         });
       }
     }
@@ -393,7 +400,9 @@ const Engine = (() => {
       rendaPrev: sum(r.filter((o) => o.previsto), (o) => o.valor),
       receber: sum(m.filter((o) => o.receber > 0 && !o.recebido && (isGasto(o) || isRessarc(o))), (o) => o.receber),
       fixos: sum(g.filter((o) => o.fixo), (o) => o.minha),
-      variaveis: sum(g.filter((o) => !o.fixo), (o) => o.minha),
+      parcelas: sum(g.filter((o) => o.parcela), (o) => o.minha),
+      espolio: sum(g.filter((o) => o.espolio), (o) => o.minha),
+      variaveis: sum(g.filter((o) => !o.fixo && !o.parcela), (o) => o.minha),
       n: m.filter((o) => o.origem === 'lanc').length,
     };
   }
