@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
