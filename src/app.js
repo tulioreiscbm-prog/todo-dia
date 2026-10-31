@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.0.2';
+  const VERSION = '1.1.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -44,6 +44,9 @@
     brain: '<path d="M12 3v18M8 7a3 3 0 0 0-3 3 3 3 0 0 0 1 5 3 3 0 0 0 6 1M16 7a3 3 0 0 1 3 3 3 3 0 0 1-1 5 3 3 0 0 1-6 1M8 7a3 3 0 0 1 4-3M16 7a3 3 0 0 0-4-3"/>',
     lock: '<rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.6" r="1.3"/>',
     calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    mic: '<rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/>',
+    copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
   };
   const ic = (n, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
   const SPARK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2c.8 4.9 2.1 6.2 7 7-4.9.8-6.2 2.1-7 7-.8-4.9-2.1-6.2-7-7 4.9-.8 6.2-2.1 7-7zM19 14c.4 2.4 1 3 3.4 3.4-2.4.4-3 1-3.4 3.4-.4-2.4-1-3-3.4-3.4 2.4-.4 3-1 3.4-3.4z"/></svg>';
@@ -105,6 +108,19 @@
     return [...map.values()];
   }
   const itensAtuais = () => itens();
+  // Caixa de entrada: compras avisadas pela Carteira do Google, esperando revisão
+  function caixa() {
+    const feitas = new Set(S.outbox.filter((o) => o.t === 'caixa').map((o) => o.id));
+    const its = itens().filter((i) => !i.excluido);
+    return ((S.server && S.server.caixa) || []).filter((n) => !feitas.has(n.id)).map((n) => {
+      const p = E.parseNotificacao(n, meios());
+      const data = p.data || hoje();
+      const cls = p.desc ? classifyLocal(p.desc, 'despesa') : null;
+      // já lançado à mão? mesmo valor, até 1 dia de diferença, mesmo cartão (quando conhecido)
+      const repetido = p.valor ? its.find((i) => i.valor === p.valor && Math.abs(E.diffDays(i.data, data)) <= 1 && (!p.meioId || i.meioId === p.meioId)) : null;
+      return { n, p, data, cls, repetido, pronto: p.ok && !!p.meioId && !!cls && !repetido };
+    }).sort((a, b) => b.n.em - a.n.em);
+  }
   function D() {
     const t = hoje();
     if (S.memo && S.memo.v === S.version && S.memo.t === t) return S.memo;
@@ -156,7 +172,7 @@
   }
   function receber(dados) {
     if (!dados) return;
-    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '', recursos: dados.recursos || [], versao: dados.versao || '' };
+    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '', recursos: dados.recursos || [], versao: dados.versao || '', caixa: dados.caixa || [], temChaveNotif: !!dados.temChaveNotif };
     S.lastSync = Date.now();
     lsSet(LS.data, { server: S.server, at: S.lastSync });
   }
@@ -183,7 +199,7 @@
   }
   // Coloca uma alteração na fila (substitui alteração anterior do mesmo item que ainda não saiu)
   function enqueue(op) {
-    const key = op.t === 'lanc' ? 'l:' + op.item.id : op.t === 'fixo' ? 'f:' + op.rec.id : op.t === 'config' ? 'c:' + op.nome : 'a:' + op.id;
+    const key = op.t === 'lanc' ? 'l:' + op.item.id : op.t === 'fixo' ? 'f:' + op.rec.id : op.t === 'config' ? 'c:' + op.nome : op.t === 'caixa' ? 'k:' + op.id : 'a:' + op.id;
     op._k = key;
     if (!S.sending) S.outbox = S.outbox.filter((o) => o._k !== key);
     S.outbox.push(op); saveOutbox(); applyView(); render();
@@ -382,9 +398,10 @@
       <form class="quick" data-form="quick" autocomplete="off">${SPARK.replace('<svg', '<svg class="spark"')}
         <label class="sr" for="quickIn">Lançamento rápido</label>
         <input id="quickIn" name="q" placeholder="Ex.: padaria 18,50 pix" enterkeyhint="send" value="${esc(S.ui.quickText || '')}">
-        <button type="submit">Lançar</button></form>
+        ${vozSuportada() ? `<button type="button" class="mic" data-act="voz" aria-label="Lançar por voz">${ic('mic')}</button>` : ''}<button type="submit">Lançar</button></form>
       ${q && q.parsed ? quickPreview(q) : ''}
       ${banners()}
+      ${(() => { const cx = caixa(); return cx.length ? `<button class="card row" data-act="sub" data-sub="caixa" style="text-align:left"><span class="mono rec">${ic('bell')}</span><span class="grow"><b style="display:block">${cx.length === 1 ? '1 compra veio' : cx.length + ' compras vieram'} da Carteira</b><span class="small muted">Toque para revisar e lançar</span></span><b class="num">${brl(E.sum(cx, (x) => x.p.valor || 0))}</b>${ic('right', 'chev')}</button>` : ''; })()}
       ${antes ? `<section class="card hero" aria-label="Início do acompanhamento">
         <span class="lead">Seu acompanhamento começa em</span>
         <div class="big" style="font-size:38px">1º de ${esc(MESES[+d.inicioAcomp.slice(5) - 1])}</div>
@@ -653,6 +670,8 @@
     if (sub === 'trava') return viewTrava();
     if (sub === 'importar') return viewImportar();
     if (sub === 'receber') return viewReceber();
+    if (sub === 'caixa') return viewCaixa();
+    if (sub === 'notif') return viewNotif();
     const totFix = E.sum(S.recorrentes.filter((r) => r.tipo !== 'receita'), (r) => E.valorRecorrente(r, ymHoje()) || E.valorRecorrente(r, E.addMonthsYM(ymHoje(), 1)) || 0);
     const item = (k, icn, t, s) => `<button class="li" data-act="sub" data-sub="${k}"><span class="mono">${ic(icn)}</span><span class="grow"><span class="t" style="display:block">${t}</span><span class="s" style="display:block">${s}</span></span>${ic('right', 'chev')}</button>`;
     const lix = itens().filter((i) => i.excluido).length;
@@ -666,6 +685,7 @@
       <div class="card list" style="padding-block:2px">
         ${item('receber', 'users', 'A receber da família', 'Divididos e ressarcimentos')}
         ${item('conexao', 'cloud', 'Sua planilha e conexão', S.lastSync ? 'Sincronizado ' + new Date(S.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Ainda não sincronizado')}
+        ${item('notif', 'bell', 'Compras da Carteira do Google', S.server.temChaveNotif ? `Ligado · ${caixa().length} para revisar` : 'Lançar sozinho a partir das notificações')}
         ${item('importar', 'download', 'Importar lançamentos', 'Cole um bloco preparado pelo Claude')}
         ${item('lixeira', 'trash', 'Lixeira', lix ? `${lix} ${lix === 1 ? 'item' : 'itens'}` : 'Vazia')}
         ${item('acomp', 'calendar', 'Início do acompanhamento', S.cfg.prefs.inicioAcomp ? 'Relatórios contam a partir de ' + mesNome(S.cfg.prefs.inicioAcomp) : 'Desde o primeiro lançamento')}
@@ -766,6 +786,8 @@
         <p style="margin:0"><b style="color:var(--ink)">Categorias.</b> Primeiro ele procura no que já aprendeu com você, depois num dicionário de lojas e serviços. Quando você corrige, ele memoriza.</p>
         <p style="margin:0"><b style="color:var(--ink)">Faturas.</b> Compras feitas antes do dia de fechamento entram na fatura do mês; a partir do dia de fechamento, na seguinte. Parcelas caem uma em cada fatura.</p>
         <p style="margin:0"><b style="color:var(--ink)">Fixos.</b> Gastos de contrato, com o mesmo valor todo mês (internet, streaming, academia). Entram sozinhos; para cartão, o dia da cobrança define a fatura.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Voz.</b> Toque no microfone ao lado do campo e fale: "açougue oitenta e sete e cinquenta no inter ontem". O app mostra o que entendeu e só salva quando você confirmar.</p>
+        <p style="margin:0"><b style="color:var(--ink)">Compras da Carteira.</b> Com o MacroDroid configurado (Ajustes › Compras da Carteira do Google), cada compra por aproximação chega para você revisar e lançar.</p>
         <p style="margin:0"><b style="color:var(--ink)">Espólio.</b> Marque ao lançar. Não divide nada sozinho: só separa esses custos nos relatórios. Para dividir, use o botão Dividido.</p>
         <p style="margin:0"><b style="color:var(--ink)">Divididos.</b> Você lança o valor cheio que pagou. Nos relatórios entra só a sua parte, e o resto vai para "A receber".</p>
         <p style="margin:0"><b style="color:var(--ink)">Média.</b> A linha de média aparece depois de dois meses completos lançados e usa até os últimos 12 meses.</p>
@@ -1011,6 +1033,56 @@
     const fixosExcl = new Set(fixos.filter((f) => f.excluir).map((f) => f.r.id));
     return { itens, fixos, meios: meiosP, prefs, apagar, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
   }
+  function viewCaixa() {
+    const cx = caixa();
+    if (!cx.length) return `<div class="card">${emptyState('Nada para revisar', 'As compras avisadas pela Carteira do Google aparecem aqui para você conferir antes de lançar.')}</div>`;
+    const prontos = cx.filter((x) => x.pronto);
+    const cartoes = meiosAtivos().filter((m) => m.tipo === 'credito' || m.tipo === 'debito');
+    const linha = (x) => {
+      const m = meioById(x.p.meioId);
+      const sub = [x.cls ? catNome(x.cls.catId, x.cls.subId) : 'Sem categoria', m ? m.nome : x.p.final ? `cartão ••${x.p.final}` : 'cartão ?', dataCurta(x.data) + ' ' + new Date(x.n.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })].join(' · ');
+      return `<div class="li fat" style="display:block">
+        <div class="row between" style="align-items:flex-start"><span class="grow"><span class="t">${esc(x.p.desc || x.n.titulo || 'Compra')}</span><span class="s">${esc(sub)}</span></span><span class="amt">${x.p.valor ? brl(x.p.valor) : '—'}</span></div>
+        ${x.p.estorno ? `<p class="tiny" style="margin:6px 0 0;color:var(--warn-ink, var(--danger))">Parece estorno ou cancelamento: confira antes de lançar.</p>` : ''}
+        ${x.repetido ? `<p class="tiny" style="margin:6px 0 0;color:var(--coin-ink)">Talvez já lançado: "${esc(x.repetido.desc)}" ${brl(x.repetido.valor)} em ${dataCurta(x.repetido.data)}.</p>` : ''}
+        ${!x.p.ok && !x.p.estorno ? `<p class="tiny muted" style="margin:6px 0 0">Não entendi o valor: "${esc(x.n.texto)}"</p>` : ''}
+        ${x.p.final && !m ? `<div class="stack" style="gap:6px;margin-top:8px"><span class="tiny ink2">O cartão final ${esc(x.p.final)} é qual? (o app lembra)</span><div class="chips">${cartoes.map((c) => `<button class="chip" style="--cc:${esc(c.cor || 'var(--muted)')}" data-act="cx-final" data-final="${esc(x.p.final)}" data-meio="${esc(c.id)}"><i></i>${esc(c.nome)}</button>`).join('')}</div></div>` : ''}
+        <div class="btns" style="grid-template-columns:1fr 1fr;margin-top:10px"><button class="btn sm" data-act="cx-lancar" data-id="${esc(x.n.id)}">${x.pronto ? 'Conferir e lançar' : 'Completar e lançar'}</button><button class="btn sm ghost" data-act="cx-descartar" data-id="${esc(x.n.id)}">Descartar</button></div></div>`;
+    };
+    return `<div class="stack">
+      <p class="small ink2" style="margin:0">Compras avisadas pela Carteira do Google. Nada entra nos seus gastos até você lançar. Já vêm com estabelecimento, valor, cartão, data e a categoria que o app aprendeu.</p>
+      ${prontos.length ? `<button class="btn pri" data-act="cx-todos">${ic('check')}Lançar ${prontos.length === 1 ? 'a compra pronta' : `as ${prontos.length} prontas`} (${brl(E.sum(prontos, (x) => x.p.valor))})</button>` : ''}
+      <div class="card list" style="padding-block:2px">${cx.map(linha).join('')}</div>
+      <p class="tiny muted" style="margin:0">"Pronta" = cartão e categoria reconhecidos e sem lançamento parecido. As outras abrem o formulário para você completar. Compras parceladas: ajuste as parcelas no formulário.</p></div>`;
+  }
+  function viewNotif() {
+    if (!temRecurso('caixa')) return `<div class="card stack small ink2" style="gap:10px"><b style="color:var(--ink)">Falta atualizar o programa da planilha</b><p style="margin:0">Para receber as compras da Carteira, a planilha precisa da versão 1.1 do programa. Abra a planilha › Extensões › Apps Script › Código.gs › apague tudo e cole o programa novo › Salvar › Implantar › Gerenciar implantações › lápis › Versão: Nova versão › Implantar.</p></div>`;
+    const k = S.ui.chaveNotif;
+    const url = (S.conn && S.conn.url) || '';
+    const copia = (rot, val) => `<div class="field"><span class="lbl">${rot}</span><div class="row" style="gap:8px"><input class="inp mono-in" readonly value="${esc(val)}" style="font-family:ui-monospace,monospace;font-size:13px"><button class="icon-btn" data-act="copiar" data-v="${esc(val)}" aria-label="Copiar ${rot}">${ic('copy')}</button></div></div>`;
+    const pend = caixa().length;
+    return `<div class="stack">
+      ${pend ? `<button class="btn pri" data-act="sub" data-sub="caixa">${ic('bell')}Revisar ${pend === 1 ? '1 compra' : pend + ' compras'}</button>` : ''}
+      <p class="small ink2" style="margin:0">Quando você paga com o celular, a Carteira do Google mostra uma notificação com o estabelecimento, o valor e o final do cartão. O app MacroDroid lê só essa notificação e manda para a sua planilha. Ao abrir o Todo dIA, você revisa e lança.</p>
+      <div class="card stack" style="gap:10px"><b>1. Chave das notificações</b>
+        <p class="small ink2" style="margin:0">É uma chave diferente da sua chave principal: ela <b>só consegue colocar compras na fila de revisão</b>. Não lê nem altera nada da planilha.</p>
+        ${k ? `${copia('Endereço', url)}${copia('Chave das notificações', k)}<p class="tiny muted" style="margin:0">Copie agora: por segurança, a chave só aparece desta vez. Se perder, gere outra.</p>
+          <button class="btn sm" data-act="notif-teste">${ic('bell')}Mandar uma compra de teste</button>`
+        : `<button class="btn ${S.server.temChaveNotif ? '' : 'pri'}" data-act="notif-gerar">${S.server.temChaveNotif ? 'Gerar nova chave (a anterior para de funcionar)' : 'Gerar chave das notificações'}</button>`}</div>
+      <div class="card stack small ink2" style="gap:8px"><b style="color:var(--ink)">2. No MacroDroid (uma vez só)</b>
+        <ol style="margin:0;padding-left:18px;display:grid;gap:6px">
+          <li>Instale o <b>MacroDroid</b> pela Play Store e abra.</li>
+          <li>Toque em <b>Adicionar macro</b>. Em <b>Gatilhos</b>, escolha <b>Notificação › Notificação recebida</b>, marque só o app <b>Carteira do Google</b> (Google Wallet) e deixe "qualquer conteúdo". Quando o Android pedir, dê ao MacroDroid o <b>acesso a notificações</b>.</li>
+          <li>Em <b>Ações</b>, escolha <b>Conectividade › Requisição HTTP</b> (HTTP Request). Método <b>GET</b>, URL = o <b>Endereço</b> acima.</li>
+          <li>Na aba <b>Parâmetros de consulta</b> (Query Params), adicione quatro: <code>nk</code> = a chave das notificações · <code>titulo</code> = <code>[notification_title]</code> · <code>texto</code> = <code>[notification]</code> · <code>app</code> = <code>carteira</code>. Os valores entre colchetes você escolhe no botão de "texto mágico" (Magic Text).</li>
+          <li>Dê o nome <b>Todo dIA - Carteira</b> e salve. Nas configurações do Android, deixe o MacroDroid <b>sem restrição de bateria</b>, para ele não dormir.</li>
+        </ol>
+        <p style="margin:0">Pronto: a próxima compra por aproximação aparece no início do Todo dIA para revisar. Compras online e com o cartão físico não geram aviso da Carteira; essas você lança como sempre.</p></div>
+      <div class="card stack small ink2" style="gap:6px"><b style="color:var(--ink)">Cartões reconhecidos pelo final</b>
+        ${meiosAtivos().filter((m) => (m.finais || []).length).map((m) => `<span>${esc(m.nome)}: ${(m.finais || []).map((f) => '••' + esc(f)).join(', ')}</span>`).join('') || '<span>Nenhum ainda. Na primeira compra de cada cartão, o app pergunta qual é.</span>'}
+        <span class="tiny muted">Para mudar, edite o cartão em Ajustes › Cartões e formas de pagamento.</span></div>
+    </div>`;
+  }
   function viewImportar() {
     const p = S.ui.imp;
     let prev = '';
@@ -1062,7 +1134,7 @@
       meioId: pre.meioId || meioPadrao(), catId: pre.catId || null, subId: pre.subId || null,
       parcelas: pre.parcelas || 1, div: pre.div || 1, obs: '', fonteCat: pre.fonte || null, espolio: !!pre.espolio,
     };
-    sheetState = { kind: 'lanc', it: base, prevYm: edit ? E.ymOf(edit.data) : null, isEdit: !!edit, catManual: !!(edit || pre.catId), divManual: !!(edit || pre.div > 1), espManual: !!(edit || pre.espolio), err: '' };
+    sheetState = { kind: 'lanc', it: base, prevYm: edit ? E.ymOf(edit.data) : null, isEdit: !!edit, catManual: !!(edit || pre.catId), divManual: !!(edit || pre.div > 1), espManual: !!(edit || pre.espolio), caixaId: pre.caixaId || null, err: '' };
     if (!base.catId && base.desc) autoCat(true);
     renderLanc();
     setTimeout(() => { const el = $(edit || pre.valor ? '#fDesc' : '#fValor'); if (el && !edit) el.focus(); }, 60);
@@ -1161,6 +1233,7 @@
     vibrate();
     if (more) { openLanc({ meioId: item.meioId, data: item.data, tipo: item.tipo }); } else closeSheet();
     const ok = await saveItem(item, prevYm, { silent: false });
+    if (ok && st.caixaId) enqueue({ t: 'caixa', id: st.caixaId, status: 'lancado' });
     if (ok) toast(wasEdit ? 'Lançamento atualizado.' : msgLancado(item), wasEdit ? null : { label: 'Desfazer', fn: () => softDelete(item, true) });
   }
   function msgLancado(item) {
@@ -1331,6 +1404,7 @@
       ${cr ? `<div class="row" style="gap:10px"><div class="field grow"><label for="mFec">Dia de fechamento</label><input class="inp" id="mFec" type="number" inputmode="numeric" min="1" max="31" value="${m.fechamento}"></div>
         <div class="field grow"><label for="mVen">Dia de vencimento</label><input class="inp" id="mVen" type="number" inputmode="numeric" min="1" max="31" value="${m.vencimento}"></div></div>
         <div class="hint">${ic('info')}<span id="mHint">${meioHint(m)}</span></div>` : ''}
+      ${m.tipo === 'credito' || m.tipo === 'debito' ? `<div class="field"><label for="mFinais">Finais do cartão</label><input class="inp" id="mFinais" value="${esc((m.finais || []).join(', '))}" placeholder="Ex.: 4298, 5899" inputmode="numeric" autocomplete="off"><span class="tiny muted">Os 4 últimos números, como aparecem nas notificações da Carteira. Separe por vírgula se tiver cartão adicional.</span></div>` : ''}
       <div class="field"><span class="lbl">Cor</span><div class="wrapflex">${CORES.map((c) => `<button class="chip" data-act="m-cor" data-c="${c}" aria-pressed="${m.cor === c}" aria-label="Cor ${c}" style="--cc:${c};padding:8px"><i style="width:18px;height:18px;border-radius:6px"></i></button>`).join('')}</div></div>
       <div class="toggle"><span><b>Ativo</b><br><span class="small muted">Inativos somem das opções, mas o histórico fica</span></span><button class="switch" role="switch" aria-checked="${m.ativo !== false}" data-act="m-ativo" aria-label="Ativo"></button></div>
       <div class="toggle"><span><b>Padrão</b><br><span class="small muted">Usado quando a frase não diz como pagou</span></span><button class="switch" role="switch" aria-checked="${meioPadrao() === m.id}" data-act="m-padrao" aria-label="Padrão"></button></div>
@@ -1342,6 +1416,7 @@
     g('mNome').oninput = () => { m.nome = g('mNome').value; };
     g('mBanco').oninput = () => { m.banco = g('mBanco').value; };
     g('mTipo').onchange = () => { m.tipo = g('mTipo').value; renderMeio(); };
+    if (g('mFinais')) g('mFinais').oninput = () => { m.finais = [...new Set((g('mFinais').value.match(/\d{4}/g) || []))]; };
     if (g('mFec')) {
       const up = () => { m.fechamento = Math.min(31, Math.max(1, +g('mFec').value || 1)); m.vencimento = Math.min(31, Math.max(1, +g('mVen').value || 1)); g('mHint').textContent = meioHint(m); };
       g('mFec').oninput = up; g('mVen').oninput = up;
@@ -1518,7 +1593,7 @@
   // ---------- Render ----------
   let pendingRender = false;
   const TABS = { inicio: 'Início', lancamentos: 'Lançamentos', cartoes: 'Cartões', relatorios: 'Relatórios', ajustes: 'Ajustes' };
-  const SUBS = { importar: 'Importar lançamentos', trava: 'Trava com a digital', recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
+  const SUBS = { caixa: 'Compras para revisar', notif: 'Compras da Carteira', importar: 'Importar lançamentos', trava: 'Trava com a digital', recorrentes: 'Fixos', meios: 'Formas de pagamento', categorias: 'Categorias', regras: 'O que o app aprendeu', backup: 'Sua planilha', conexao: 'Sua planilha', lixeira: 'Lixeira', sobre: 'Sobre', receber: 'A receber' };
   function syncHtml() {
     const n = S.outbox.length;
     if (S.net === 'sync') return '<span class="sync"><i></i>sincronizando</span>';
@@ -1583,6 +1658,45 @@
   }
 
   // ---------- Lançamento rápido ----------
+  // ---------- Voz (reconhecimento do Google, pelo Chrome) ----------
+  let reconhecedor = null;
+  function vozSuportada() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+  function ouvir() {
+    if (reconhecedor) { reconhecedor.stop(); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
+    const r = new SR(); reconhecedor = r;
+    r.lang = 'pt-BR'; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    const btn = $('[data-act=voz]'), inp = $('#quickIn');
+    if (btn) btn.classList.add('on'); if (inp) { inp.value = ''; inp.placeholder = 'Ouvindo… fale o gasto'; }
+    let final = '', erro = '';
+    r.onresult = (ev) => { let t = ''; for (const res of ev.results) t += res[0].transcript; const i = $('#quickIn'); if (i) i.value = t; if (ev.results[ev.results.length - 1].isFinal) final = t; };
+    r.onerror = (ev) => { erro = ev.error || 'erro'; };
+    r.onend = () => {
+      reconhecedor = null;
+      const b = $('[data-act=voz]'); if (b) b.classList.remove('on');
+      const i = $('#quickIn'); if (i) i.placeholder = 'Ex.: padaria 18,50 pix';
+      if (final.trim()) { quickSubmit(E.falaParaTexto(final)); return; }
+      const msg = { 'not-allowed': 'Permita o microfone para o Todo dIA (toque no cadeado ao lado do endereço, ou nas configurações do app).', 'service-not-allowed': 'Permita o microfone para o Todo dIA nas configurações do Chrome.', 'no-speech': 'Não ouvi nada. Toque no microfone e fale de novo.', network: 'O reconhecimento de voz precisa de internet.', 'audio-capture': 'Não encontrei o microfone.' }[erro];
+      if (msg) toast(msg); else if (erro && erro !== 'aborted') toast('Não consegui entender. Tente de novo.');
+    };
+    try { r.start(); vibrate(); } catch { reconhecedor = null; toast('Não consegui ligar o microfone.'); }
+  }
+  // ---------- Caixa de entrada: ações ----------
+  function lancarDaCaixa(x) {
+    const it = { id: uid(), tipo: 'despesa', desc: x.p.desc, valor: x.p.valor, data: x.data, meioId: x.p.meioId, catId: x.cls.catId, subId: x.cls.subId, parcelas: 1, div: 1, obs: '', fonteCat: x.cls.fonte || null, espolio: !!x.cls.espolio };
+    saveItem(it, null); enqueue({ t: 'caixa', id: x.n.id, status: 'lancado' });
+    return it;
+  }
+  async function gerarChaveNotif() {
+    try { const j = await chamar([{ t: 'gerar_chave_notif' }]); S.ui.chaveNotif = j.aplicadas && j.aplicadas[0] && j.aplicadas[0].chaveNotif; receber(j.dados); applyView(); render(); toast('Chave criada. Copie para o MacroDroid.'); }
+    catch (e) { toast((e && e.erro) || 'Não consegui criar a chave agora.'); }
+  }
+  async function testeNotif() {
+    const u = new URL(S.conn.url);
+    Object.entries({ nk: S.ui.chaveNotif, app: 'teste', titulo: 'Teste do Todo dIA', texto: 'R$ 1,23 com cartão de teste ••0000' }).forEach(([k, v]) => u.searchParams.set(k, v));
+    try { const r = await fetch(u.toString(), { redirect: 'follow' }); const j = await r.json(); if (!j.ok) throw j; await sync(); toast('Chegou! Veja em Compras para revisar e descarte o teste.'); }
+    catch (e) { toast((e && e.erro) || 'O teste não chegou. Confira a internet.'); }
+  }
   async function quickSubmit(text) {
     text = String(text || '').trim(); S.ui.quickText = text; if (!text) { openLanc(); return; }
     const t = hoje();
@@ -1765,6 +1879,15 @@
         break;
       }
       case 'quick-save': quickSave(); break;
+      case 'voz': ouvir(); break;
+      case 'copiar': try { await navigator.clipboard.writeText(el.dataset.v); toast('Copiado.'); } catch { toast('Segure o dedo no texto para copiar.'); } break;
+      case 'notif-gerar': gerarChaveNotif(); break;
+      case 'notif-teste': testeNotif(); break;
+      case 'cx-final': { const lista = clone(meios()); const m = lista.find((y) => y.id === el.dataset.meio); if (m) { m.finais = [...new Set([...(m.finais || []), el.dataset.final])]; saveMeios(lista); toast(`Final ${el.dataset.final} = ${m.nome}.`); } break; }
+      case 'cx-descartar': enqueue({ t: 'caixa', id: el.dataset.id, status: 'descartado' }); toast('Descartada.'); break;
+      case 'cx-lancar': { const x = caixa().find((y) => y.n.id === el.dataset.id); if (!x) break;
+        openLanc({ tipo: 'despesa', desc: x.p.desc, valor: x.p.valor || 0, data: x.data, meioId: x.p.meioId || undefined, catId: x.cls ? x.cls.catId : null, subId: x.cls ? x.cls.subId : null, fonte: x.cls ? x.cls.fonte : null, espolio: !!(x.cls && x.cls.espolio), caixaId: x.n.id }); break; }
+      case 'cx-todos': { const prontos = caixa().filter((y) => y.pronto); prontos.forEach(lancarDaCaixa); toast(`${prontos.length === 1 ? '1 compra lançada' : prontos.length + ' compras lançadas'}.`); if (!caixa().length) { S.ui.sub = null; S.ui.tab = 'inicio'; render(); } break; }
       case 'quick-edit': { const p = S.ui.quick.parsed; S.ui.quick = null; S.ui.quickText = ''; render(); openLanc({ ...p }); if (sheetState && p.catId) { sheetState.catManual = true; sheetState.divManual = p.div > 1; } break; }
       case 'quick-cancel': S.ui.quick = null; S.ui.quickText = ''; render(); break;
       default: break;

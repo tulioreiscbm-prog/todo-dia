@@ -27,7 +27,7 @@ test('planilha antiga ganha as colunas novas no fim e guarda espólio e parcela 
   const lido = r.dados.lancamentos.find((i) => i.id === 'IMP-teste');
   assert.equal(lido.espolio, true); assert.equal(lido.parcelaIni, 3); assert.equal(lido.parcelas, 2);
   assert.equal(r.dados.fixos.find((f) => f.id === 'fx').espolio, true);
-  assert.deepEqual(r.dados.recursos, ['espolio', 'parcela_inicial']);
+  assert.deepEqual(r.dados.recursos, ['espolio', 'parcela_inicial', 'caixa']);
 });
 
 test('lançamento comum não ganha espólio nem parcela inicial', () => {
@@ -35,4 +35,26 @@ test('lançamento comum não ganha espólio nem parcela inicial', () => {
   const r = amb.post([{ t: 'lanc', item: { ...item, id: 'Lcomum', espolio: false, parcelaIni: undefined, parcelas: 1 } }]);
   const lido = r.dados.lancamentos.find((i) => i.id === 'Lcomum');
   assert.equal(lido.espolio, undefined); assert.equal(lido.parcelaIni, undefined);
+});
+
+test('chave das notificações: só inclui na Caixa de entrada, não lê nada', () => {
+  const amb = ambiente(false);
+  const get = (parameter) => { amb.ctx.__e = { parameter }; return JSON.parse(vm.runInContext('doGet(__e)', amb.ctx).text); };
+  // sem chave gerada, nada entra
+  assert.equal(get({ nk: 'x', titulo: 'Loja', texto: 'R$ 1,00' }).ok, false);
+  const r = amb.post([{ t: 'gerar_chave_notif' }]);
+  const nk = r.aplicadas[0].chaveNotif;
+  assert.ok(/^[0-9a-f]{40}$/.test(nk)); assert.equal(r.dados.temChaveNotif, true);
+  const n = get({ nk, app: 'carteira', titulo: 'Brasil Variedades', texto: 'R$ 128,73 com Banco Inter Black Mastercard ••4298' });
+  assert.equal(n.ok, true); assert.ok(n.id); assert.equal(n.dados, undefined);
+  assert.equal(get({ nk, titulo: 'Brasil Variedades', texto: 'R$ 128,73 com Banco Inter Black Mastercard ••4298' }).repetida, true);
+  // a chave das notificações não serve para ler nem gravar lançamentos
+  assert.equal(get({ key: nk }).ok, false);
+  amb.ctx.__e = { postData: { contents: JSON.stringify({ key: nk, ops: [] }) } };
+  assert.equal(JSON.parse(vm.runInContext('doPost(__e)', amb.ctx).text).ok, false);
+  // o app (chave principal) vê a pendência e marca como lançada
+  const d = amb.post([]).dados;
+  assert.equal(d.caixa.length, 1); assert.equal(d.caixa[0].titulo, 'Brasil Variedades');
+  const d2 = amb.post([{ t: 'caixa', id: d.caixa[0].id, status: 'lancado' }]).dados;
+  assert.equal(d2.caixa.length, 0);
 });

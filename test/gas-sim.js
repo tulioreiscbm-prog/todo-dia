@@ -19,6 +19,7 @@ function criarAmbiente() {
     this.getRange = (r, c, nr = 1, nc = 1) => ({
       getValues: () => { ensure(r + nr - 1, c + nc - 1); return self.data.slice(r - 1, r - 1 + nr).map((row) => row.slice(c - 1, c - 1 + nc)); },
       setValues: (vals) => { ensure(r + nr - 1, c + nc - 1); vals.forEach((row, i) => row.forEach((v, j) => { self.data[r - 1 + i][c - 1 + j] = v; })); return this; },
+      setValue: (v) => { ensure(r, c); self.data[r - 1][c - 1] = v; return this; },
       setNumberFormat() { return this; }, setFontWeight() { return this; }, setFontSize() { return this; }, setFontFamily() { return this; }, setBackground() { return this; },
     });
     this.appendRow = (row) => { self.data.push(row.slice()); };
@@ -72,7 +73,10 @@ if (require.main === module) {
       if (url.pathname === '/__estado') { res.end(JSON.stringify(Object.fromEntries([...amb.sheets].map(([k, s]) => [k, s.data])))); return; }
       if (url.pathname === '/__falhar') { amb.falhar = url.searchParams.get('v') === '1'; res.end('ok'); return; }
       if (amb.falhar) { req.socket.destroy(); return; }
-      amb.ctx.__e = req.method === 'POST' ? { postData: { contents: body } } : { parameter: Object.fromEntries(url.searchParams) };
+      // como no Apps Script: parâmetros da URL e de corpo "form" vão para e.parameter
+      const parameter = Object.fromEntries(url.searchParams);
+      if (req.method === 'POST' && /x-www-form-urlencoded/.test(req.headers['content-type'] || '')) Object.assign(parameter, Object.fromEntries(new URLSearchParams(body)));
+      amb.ctx.__e = req.method === 'POST' ? { postData: { contents: body }, parameter } : { parameter };
       const out = vm.runInContext(req.method === 'POST' ? 'doPost(__e)' : 'doGet(__e)', amb.ctx);
       res.setHeader('Content-Type', 'application/json');
       setTimeout(() => res.end(out.text), 60);

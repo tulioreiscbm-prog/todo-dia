@@ -299,6 +299,74 @@ const Engine = (() => {
     return (c.subs || []).find((s) => s.id === subId) || null;
   }
 
+  // ---------- Fala → texto do lançamento ----------
+  // O reconhecimento de voz às vezes escreve números por extenso ("oitenta e sete e cinquenta").
+  // Converte para dígitos e junta reais e centavos: "87,50".
+  const NUM = { zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10,
+    onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19,
+    vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90, cem: 100, cento: 100,
+    duzentos: 200, duzentas: 200, trezentos: 300, trezentas: 300, quatrocentos: 400, quatrocentas: 400, quinhentos: 500, quinhentas: 500,
+    seiscentos: 600, seiscentas: 600, setecentos: 700, setecentas: 700, oitocentos: 800, oitocentas: 800, novecentos: 900, novecentas: 900 };
+  const ordem = (v) => (v >= 100 ? 3 : v >= 20 ? 2 : v >= 10 ? 1.5 : 1);
+  function falaParaTexto(fala) {
+    const raw = String(fala || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    const k = raw.map((t) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,!?]+$/, ''));
+    const out = [];
+    let i = 0;
+    while (i < raw.length) {
+      // sequência de números por extenso: "mil e duzentos e trinta e quatro", "oitenta e sete"
+      if (!(k[i] in NUM) && k[i] !== 'mil') { out.push(raw[i]); i++; continue; }
+      const ini = i; let total = 0, cur = 0, slot = 4, palavras = 0;
+      while (i < raw.length) {
+        const w = k[i];
+        if (w === 'mil') { total += (cur || 1) * 1000; cur = 0; slot = 4; i++; palavras++; continue; }
+        if (w === 'e' && i + 1 < raw.length && k[i + 1] in NUM && ordem(NUM[k[i + 1]]) < slot && cur + total > 0) { i++; continue; }
+        if (!(w in NUM)) break;
+        const v = NUM[w], o = ordem(v);
+        if (palavras && o >= slot) break; // não cabe: é outro número (ex.: centavos)
+        cur += v; slot = o === 2 ? 1.5 : o === 1.5 ? 1 : o === 1 ? 0 : o; palavras++; i++;
+        if (v === 100 && w === 'cem') slot = 0;
+      }
+      const n = total + cur;
+      // "um"/"uma" soltos são artigo ("comprei um tênis"), não número
+      if (palavras === 1 && (k[ini] === 'um' || k[ini] === 'uma') && !(k[i] in { reais: 1, real: 1, vezes: 1, x: 1 })) { out.push(raw[ini]); i = ini + 1; continue; }
+      out.push(String(n));
+    }
+    let t = out.join(' ');
+    t = t.replace(/\b(\d+) (?:reais|real) e (\d{1,2}) centavos?\b/gi, (m, a, b) => `${a},${b.padStart(2, '0')}`)
+      .replace(/\b(\d+) (?:reais|real) e (\d{1,2})\b/gi, (m, a, b) => `${a},${b.padStart(2, '0')}`)
+      .replace(/\b(\d+) (?:reais|real)\b/gi, '$1')
+      .replace(/\b(\d+) centavos?\b/gi, (m, b) => `0,${b.padStart(2, '0')}`)
+      .replace(/(^|\s)(\d{1,5}) e (\d{1,2})(?=\s|$)/g, (m, sp, a, b) => `${sp}${a},${b.padStart(2, '0')}`)
+      .replace(/\b(\d+) (?:vez|vezes)\b/gi, '$1x')
+      .replace(/\bem (\d+)x\b/gi, '$1x')
+      .replace(/\bpor cento\b/gi, '%');
+    return t;
+  }
+
+  // ---------- Notificações de compra (Carteira do Google e bancos) ----------
+  // Ex.: título "Brasil Variedades", texto "R$ 128,73 com Banco Inter Black Mastercard ••4298"
+  const GENERICOS = /^(compra|pagamento|transa[cç][aã]o|carteira|google wallet|cart[aã]o|aviso|nova compra)/i;
+  function parseNotificacao(n, meios) {
+    const titulo = String((n && n.titulo) || '').trim(), texto = String((n && n.texto) || '').trim();
+    const tudo = `${titulo} ${texto}`;
+    const mv = tudo.match(/R\$\s*(-?[\d.]+,\d{2})/);
+    const valor = mv ? parseValor(mv[1]) : null;
+    const mf = tudo.match(/(?:[•·*]{1,4}\s?|final\s+|terminad[oa]\s+em\s+)(\d{4})\b/i);
+    const final = mf ? mf[1] : null;
+    let desc = titulo;
+    if (!desc || GENERICOS.test(desc)) {
+      const me = texto.match(/\bem\s+([^,.;]+?)(?=\s+(?:no|na|com|de|via|usando)\s|\s*R\$|[,.;]|$)/i);
+      desc = me ? me[1].trim() : titulo;
+    }
+    desc = desc.replace(/\s+/g, ' ').replace(/\b([A-ZÀ-Ú]{2,})\b/g, (w) => w.charAt(0) + w.slice(1).toLowerCase()).slice(0, 80);
+    const meio = final ? (meios || []).find((m) => (m.finais || []).map(String).includes(final)) : null;
+    const d = n && n.em ? new Date(Number(n.em)) : null;
+    const data = d && !isNaN(d) ? iso(d.getFullYear(), d.getMonth() + 1, d.getDate()) : null;
+    const estorno = /estorn|reembols|cancelad|devolu/i.test(tudo);
+    return { desc, valor, final, meioId: meio ? meio.id : null, data, estorno, ok: !!(valor && valor > 0 && desc && !estorno) };
+  }
+
   // ---------- Recorrentes ----------
   function valorRecorrente(rec, ym) {
     if (!rec || ym < rec.inicio || (rec.fim && ym > rec.fim)) return null;
@@ -453,7 +521,7 @@ const Engine = (() => {
     pad, iso, parseISO, dim, todayISO, ymOf, addMonthsYM, clampDate, addDays, weekday, diffDays, monthsBetween,
     fatura, faturaPorRef, faturaStatus, splitParcelas, parseValor, fmtBRL, fmtCompact,
     norm, normKey, ruleKey, parse, resolveMeio, classify, findCat, findSub, matchDicionario, matchRegra,
-    valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
+    falaParaTexto, parseNotificacao, valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
   };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;

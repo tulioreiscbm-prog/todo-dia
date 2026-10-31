@@ -352,3 +352,8 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.quick button.mic { width: 42px; padding: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); flex: none; }
+.quick button.mic svg { width: 20px; height: 20px; }
+.quick button.mic.on { background: var(--danger); color: #fff; animation: ouvindo 1.2s ease-in-out infinite; }
+@keyframes ouvindo { 50% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .quick button.mic.on { animation: none; } }

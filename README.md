@@ -9,6 +9,11 @@ Controle de gastos do dia a dia: lançamento rápido por frase ("açougue 87,50 
 - **Fixos** (contratos com o mesmo valor todo mês): contam desde o dia 1º de cada mês; no cartão, o dia da cobrança define a fatura.
 - **Espólio:** uma marcação no lançamento que separa esses custos nos relatórios. Não divide nada sozinha.
 
+## Voz e compras da Carteira do Google
+
+- **Voz:** o botão de microfone usa o reconhecimento de voz do Chrome (pt-BR). Números falados por extenso viram valor ("oitenta e sete e cinquenta" → 87,50). Nada é salvo sem confirmação.
+- **Compras da Carteira:** um app de automação no celular (MacroDroid) lê a notificação da Carteira do Google e manda título e texto para a planilha com uma **chave só de inclusão** (gerada no app, em Ajustes › Compras da Carteira do Google). Essa chave só acrescenta linhas na aba "Caixa de entrada"; não lê nem altera nada. No app, cada compra é revisada antes de virar lançamento.
+
 **App:** https://tulioreiscbm-prog.github.io/todo-dia
 
 ## Onde ficam os dados

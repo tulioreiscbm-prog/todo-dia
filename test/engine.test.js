@@ -269,3 +269,27 @@ test('fixo que trocou de cartão: outubro no C6, dali em diante no Inter', () =>
   assert.deepEqual([nov.meioId, nov.fatura], ['inter-credito', '2026-12']);
   assert.equal(E.meioRecorrente({ ...rec, excecoes: { '2026-12': { meioId: 'boleto' } } }, '2026-12'), 'boleto');
 });
+
+test('voz: números falados por extenso viram valor, parcelas e divisão', () => {
+  const casos = [
+    ['açougue oitenta e sete e cinquenta no inter ontem', 'açougue 87,50 no inter ontem'],
+    ['padaria dezoito reais e cinquenta centavos', 'padaria 18,50'],
+    ['capacete novecentos no c6 em três vezes', 'capacete 900 no c6 3x'],
+    ['conta de luz duzentos e trinta dividido por cinco espólio', 'conta de luz 230 dividido por 5 espólio'],
+    ['comprei um tênis trezentos e quarenta e nove e noventa', 'comprei um tênis 349,90'],
+    ['notebook mil e duzentos em dez vezes', 'notebook 1200 10x'],
+    ['supermercado R$ 87,50', 'supermercado R$ 87,50'],
+  ];
+  for (const [fala, esperado] of casos) assert.equal(E.falaParaTexto(fala), esperado, fala);
+});
+
+test('notificação da Carteira: estabelecimento, valor e final do cartão', () => {
+  const meios = [{ id: 'inter-credito', tipo: 'credito', finais: ['4298'] }];
+  const n = E.parseNotificacao({ titulo: 'Brasil Variedades', texto: 'R$ 128,73 com Banco Inter Black Mastercard ••4298', em: new Date(2026, 9, 31, 14, 45).getTime() }, meios);
+  assert.deepEqual([n.desc, n.valor, n.final, n.meioId, n.data, n.ok], ['Brasil Variedades', 12873, '4298', 'inter-credito', '2026-10-31', true]);
+  const c6 = E.parseNotificacao({ titulo: 'SUPER NOSSO JARAGUA', texto: 'R$ 1.234,50 com C6 Carbon ••1111' }, meios);
+  assert.deepEqual([c6.desc, c6.valor, c6.final, c6.meioId], ['Super Nosso Jaragua', 123450, '1111', null]);
+  const banco = E.parseNotificacao({ titulo: 'Compra aprovada', texto: 'Compra de R$ 45,90 aprovada em PADARIA DONA CLARA no cartão final 5899.' }, meios);
+  assert.deepEqual([banco.desc, banco.valor, banco.final], ['Padaria Dona Clara', 4590, '5899']);
+  assert.equal(E.parseNotificacao({ titulo: 'Reembolso', texto: 'R$ 10,00 estornado' }, meios).ok, false);
+});

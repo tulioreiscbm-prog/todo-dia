@@ -8,9 +8,9 @@
  * O passo a passo completo está no README do repositório.
  */
 
-const VERSAO_SCRIPT = '1.0.0';
+const VERSAO_SCRIPT = '1.1.0';
 // o que este programa sabe guardar além do básico (o app confere antes de usar)
-const RECURSOS = ['espolio', 'parcela_inicial'];
+const RECURSOS = ['espolio', 'parcela_inicial', 'caixa'];
 const ABAS = {
   lanc: {
     nome: 'Lançamentos',
@@ -25,13 +25,18 @@ const ABAS = {
     texto: ['id', 'tipo', 'descricao', 'categoria', 'subcategoria', 'meio', 'inicio', 'fim', 'valores', 'excecoes', 'recebidos'],
   },
   config: { nome: 'Config', cols: ['chave', 'valor', 'atualizado_em'], texto: ['chave', 'valor'] },
+  // compras avisadas por notificação (Carteira do Google), esperando revisão no app
+  caixa: { nome: 'Caixa de entrada', cols: ['id', 'recebido_em', 'app', 'titulo', 'texto', 'status', 'atualizado_em'],
+    texto: ['id', 'app', 'titulo', 'texto', 'status'], opcional: true },
 };
+const CAIXA_MAX_PENDENTES = 300;
 const CONFIG_PERMITIDA = ['meios', 'categorias', 'regras', 'prefs'];
 
 // ---------------------------------------------------------------- HTTP
 function doGet(e) {
   return responder_(function () {
     const p = (e && e.parameter) || {};
+    if (p.nk) return receberNotificacao_(p);
     exigirChave_(p.key);
     if (p.action === 'ping') return { ok: true, versao: VERSAO_SCRIPT };
     return { ok: true, dados: tudo_() };
@@ -40,6 +45,7 @@ function doGet(e) {
 
 function doPost(e) {
   return responder_(function () {
+    if (e && e.parameter && e.parameter.nk) return receberNotificacao_(e.parameter);
     let body;
     try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { throw erro_('pedido mal formado'); }
     exigirChave_(body.key);
@@ -64,6 +70,48 @@ function responder_(fn) {
   try { out = fn(); } catch (err) { out = { ok: false, erro: (err && err.message) || String(err), codigo: (err && err.codigo) || 'erro' }; }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
+// ---------------------------------------------------------------- notificações (chave só de inclusão)
+// O celular manda título e texto da notificação com a "chave das notificações". Essa chave só consegue
+// acrescentar uma linha na Caixa de entrada: não lê nem altera nenhum outro dado.
+function receberNotificacao_(p) {
+  const chave = PropertiesService.getScriptProperties().getProperty('CHAVE_NOTIF');
+  if (!chave || String(p.nk) !== chave) throw erro_('Chave inválida.', 'chave');
+  const titulo = String(p.titulo || '').slice(0, 120).trim();
+  const texto = String(p.texto || '').slice(0, 300).trim();
+  if (!texto && !titulo) throw erro_('notificação vazia');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const ss = planilha_();
+    const sh = abaCriando_(ss, ABAS.caixa);
+    const linhas = linhas_(ss, ABAS.caixa);
+    const pend = linhas.filter(function (o) { return !txt_(o.status); });
+    if (pend.length >= CAIXA_MAX_PENDENTES) throw erro_('caixa de entrada cheia: revise no app');
+    const agora = Date.now();
+    // a mesma notificação pode chegar duas vezes (atualização do aviso): ignora repetida em 10 minutos
+    const rep = linhas.some(function (o) { return txt_(o.titulo) === titulo && txt_(o.texto) === texto && agora - num_(o.recebido_em) < 600000; });
+    if (rep) return { ok: true, repetida: true };
+    const id = 'N' + agora.toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    const head = sh.getDataRange().getValues()[0];
+    const obj = { id: id, recebido_em: agora, app: String(p.app || '').slice(0, 40), titulo: titulo, texto: texto, status: '', atualizado_em: agora };
+    sh.appendRow(head.map(function (h) { return obj[h] === undefined ? '' : obj[h]; }));
+    return { ok: true, id: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function abaCriando_(ss, def) {
+  let sh = ss.getSheetByName(def.nome);
+  if (!sh) { sh = ss.insertSheet(def.nome); sh.getRange(1, 1, 1, def.cols.length).setValues([def.cols]); sh.setFrozenRows(1); }
+  garantirColunas_(sh, def);
+  return sh;
+}
+function caixaPendente_(ss) {
+  if (!ss.getSheetByName(ABAS.caixa.nome)) return [];
+  return linhas_(ss, ABAS.caixa).filter(function (o) { return txt_(o.id) && !txt_(o.status); })
+    .map(function (o) { return { id: txt_(o.id), em: num_(o.recebido_em), app: txt_(o.app), titulo: txt_(o.titulo), texto: txt_(o.texto) }; });
+}
+
 function erro_(msg, codigo) { const e = new Error(msg); e.codigo = codigo || 'erro'; return e; }
 function exigirChave_(k) {
   const chave = PropertiesService.getScriptProperties().getProperty('CHAVE');
@@ -147,6 +195,8 @@ function tudo_() {
     lancamentos: linhas_(ss, ABAS.lanc).map(lancDeLinha_).filter(function (i) { return i.id; }),
     fixos: linhas_(ss, ABAS.fixos).map(fixoDeLinha_).filter(function (f) { return f.id && !f.excluido; }),
     config: config,
+    caixa: caixaPendente_(ss),
+    temChaveNotif: !!PropertiesService.getScriptProperties().getProperty('CHAVE_NOTIF'),
     planilhaUrl: ss.getUrl(),
     agora: Date.now(),
     versao: VERSAO_SCRIPT,
@@ -213,6 +263,20 @@ function aplicar_(ss, op) {
     if (s.length > 45000) throw erro_('configuração grande demais');
     return upsert_(aba_(ss, ABAS.config), ABAS.config, { chave: op.nome, valor: s, atualizado_em: op.em || Date.now() }, 'chave');
   }
+  if (op.t === 'gerar_chave_notif') {
+    const nova = novaChave_();
+    PropertiesService.getScriptProperties().setProperty('CHAVE_NOTIF', nova);
+    return { chaveNotif: nova };
+  }
+  if (op.t === 'caixa') {
+    if (['lancado', 'descartado'].indexOf(op.status) < 0) throw erro_('situação inválida');
+    const sh = abaCriando_(ss, ABAS.caixa); const v = sh.getDataRange().getValues(); const head = v[0];
+    const iId = head.indexOf('id'), iSt = head.indexOf('status'), iAt = head.indexOf('atualizado_em');
+    for (let r = 1; r < v.length; r++) if (String(v[r][iId]) === String(op.id)) {
+      sh.getRange(r + 1, iSt + 1).setValue(op.status); sh.getRange(r + 1, iAt + 1).setValue(Date.now()); return op.status;
+    }
+    return 'não encontrado';
+  }
   if (op.t === 'apagar') {
     const sh = aba_(ss, ABAS.lanc); const v = sh.getDataRange().getValues();
     for (let r = v.length - 1; r >= 1; r--) if (String(v[r][0]) === String(op.id)) { sh.deleteRow(r + 1); return 'apagado'; }
@@ -226,6 +290,7 @@ function instalar() {
   const ss = planilha_();
   Object.keys(ABAS).forEach(function (k) {
     const def = ABAS[k];
+    if (def.opcional) return;
     let sh = ss.getSheetByName(def.nome);
     if (!sh) sh = ss.insertSheet(def.nome);
     const atual = sh.getRange(1, 1, 1, def.cols.length).getValues()[0];
