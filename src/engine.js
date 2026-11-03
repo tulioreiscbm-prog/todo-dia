@@ -114,7 +114,7 @@ const Engine = (() => {
   const BANKS = { inter: 'inter', c6: 'c6', nubank: 'nubank', nu: 'nubank', bradesco: 'bradesco', bb: 'banco do brasil',
     itau: 'itau', caixa: 'caixa', santander: 'santander', picpay: 'picpay', sicoob: 'sicoob', btg: 'btg', xp: 'xp' };
   const TYPES = { credito: 'credito', cartao: 'credito', cc: 'credito', debito: 'debito', pix: 'pix',
-    dinheiro: 'dinheiro', especie: 'dinheiro', cash: 'dinheiro' };
+    dinheiro: 'dinheiro', especie: 'dinheiro', cash: 'dinheiro', automatico: 'automatico', boleto: 'boleto' };
   const STOP = new Set(['no', 'na', 'nos', 'nas', 'em', 'de', 'do', 'da', 'dos', 'das', 'com', 'pra', 'para', 'pelo', 'pela',
     'via', 'o', 'a', 'os', 'as', 'um', 'uma', 'gastei', 'paguei', 'comprei', 'gasto', 'compra', 'e', 'r$', 'reais', 'real']);
   const MONEY_RE = /^(r\$)?(\d{1,3}(\.\d{3})+(,\d{1,2})?|\d+([.,]\d{1,2})?)$/;
@@ -210,7 +210,11 @@ const Engine = (() => {
       if (used[i]) continue;
       const t = tok[i];
       if (!bank && t in BANKS && !(t === 'nu' && !tok.some((x) => x in TYPES))) { bank = BANKS[t]; used[i] = true; }
-      else if (!type && t in TYPES) { type = TYPES[t]; used[i] = true; }
+      else if (!type && t in TYPES) {
+        type = TYPES[t]; used[i] = true;
+        // "débito automático" é uma forma só
+        if (t === 'debito' && tok[i + 1] === 'automatico') { type = 'automatico'; used[i + 1] = true; }
+      }
     }
     if (bank || type) out.meioId = resolveMeio(ctx.meios || [], bank, type, ctx.meioPadrao);
 

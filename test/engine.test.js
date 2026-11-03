@@ -293,3 +293,13 @@ test('notificação da Carteira: estabelecimento, valor e final do cartão', () 
   assert.deepEqual([banco.desc, banco.valor, banco.final], ['Padaria Dona Clara', 4590, '5899']);
   assert.equal(E.parseNotificacao({ titulo: 'Reembolso', texto: 'R$ 10,00 estornado' }, meios).ok, false);
 });
+
+test('débito automático é uma forma de pagamento própria', () => {
+  const meios = [{ id: 'inter-credito', banco: 'Inter', tipo: 'credito' }, { id: 'inter-debito', banco: 'Inter', tipo: 'debito' }, { id: 'inter-automatico', banco: 'Inter', tipo: 'automatico' }];
+  const p = E.parse('copasa 98,40 débito automático', { hoje: '2026-11-03', meios, meioPadrao: 'inter-credito' });
+  assert.deepEqual([p.meioId, p.desc, p.valor], ['inter-automatico', 'Copasa', 9840]);
+  assert.equal(E.parse('padaria 10 débito', { hoje: '2026-11-03', meios }).meioId, 'inter-debito');
+  // não tem fatura: conta no dia
+  const occ = E.expandir({ meios, itens: [{ id: 'x', tipo: 'despesa', desc: 'Copasa', valor: 9840, data: '2026-11-20', meioId: 'inter-automatico', catId: 'casa', subId: 'agua' }], recorrentes: [] }, '2026-11', '2026-11', '2026-11-21');
+  assert.deepEqual([occ[0].fatura, occ[0].comp, occ[0].previsto], [null, '2026-11', false]);
+});

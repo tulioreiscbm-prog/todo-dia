@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -11,7 +11,7 @@
   const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const SEMANA = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-  const TIPOS_MEIO = { credito: 'Cartão de crédito', debito: 'Débito', pix: 'Pix', boleto: 'Boleto', dinheiro: 'Dinheiro' };
+  const TIPOS_MEIO = { credito: 'Cartão de crédito', debito: 'Débito', automatico: 'Débito automático', pix: 'Pix', boleto: 'Boleto', dinheiro: 'Dinheiro' };
   const CORES = ['#ff7a00', '#6b7280', '#8a05be', '#cc092f', '#0b5ea8', '#12866B', '#e6a700', '#7a7f87'];
   const hoje = () => E.todayISO();
   const ymHoje = () => E.ymOf(hoje());
@@ -1017,13 +1017,20 @@
       if (!r) { if (f.excluir) return null; throw new Error(`Fixo "${f.id}" não existe no seu app.`); }
       return { r, set: f.set || {}, excluir: !!f.excluir };
     }).filter(Boolean);
+    const novosMeios = [];
     const meiosP = (obj.meios || []).map((m) => {
       const x = meios().find((y) => y.id === m.id);
+      if (!x && m.novo) {
+        const n = m.novo;
+        if (!/^[a-z0-9-]{2,40}$/.test(m.id) || !n.nome || !TIPOS_MEIO[n.tipo]) throw new Error(`Forma de pagamento nova "${m.id}" está incompleta.`);
+        novosMeios.push({ id: m.id, nome: String(n.nome).slice(0, 40), banco: String(n.banco || '').slice(0, 30), tipo: n.tipo, cor: n.cor || CORES[5], ativo: true, ordem: meios().length + novosMeios.length + 1 });
+        return null;
+      }
       if (!x) throw new Error(`Forma de pagamento "${m.id}" não existe no seu app.`);
       const set = {};
-      for (const [k, v] of Object.entries(m.set || {})) if (['fechamento', 'vencimento'].includes(k) && Number.isInteger(v) && v >= 1 && v <= 31) set[k] = v; else if (k === 'nome' && typeof v === 'string' && v.trim()) set.nome = v.trim().slice(0, 40);
+      for (const [k, v] of Object.entries(m.set || {})) if (['fechamento', 'vencimento'].includes(k) && Number.isInteger(v) && v >= 1 && v <= 31) set[k] = v; else if (k === 'nome' && typeof v === 'string' && v.trim()) set.nome = v.trim().slice(0, 40); else if (k === 'finais' && Array.isArray(v)) set.finais = [...new Set(v.map(String).filter((f) => /^\d{4}$/.test(f)))];
       return { m: x, set };
-    });
+    }).filter(Boolean);
     const prefs = {};
     for (const [k, v] of Object.entries(obj.prefs || {})) {
       if (k === 'inicioAcomp' && /^\d{4}-\d{2}$/.test(v)) prefs.inicioAcomp = v;
@@ -1031,7 +1038,7 @@
     }
     const apagar = (obj.apagar || []).map((id) => atuais.find((x) => x.id === String(id) && !x.excluido)).filter(Boolean);
     const fixosExcl = new Set(fixos.filter((f) => f.excluir).map((f) => f.r.id));
-    return { itens, fixos, meios: meiosP, prefs, apagar, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
+    return { itens, fixos, meios: meiosP, novosMeios, prefs, apagar, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
   }
   function viewCaixa() {
     const cx = caixa();
@@ -1091,7 +1098,8 @@
       prev = `<div class="card stack" style="gap:8px"><b>${esc(p.ok.titulo)}</b>
         ${p.ok.itens.length ? `<div class="list">${p.ok.itens.map((i) => `<div class="li"><span class="mono">${esc(iniciais(i.desc))}</span><span class="grow"><span class="t" style="display:block">${esc(i.desc)}</span><span class="s" style="display:block">${esc(catNome(i.catId, i.subId))} · ${esc((meioById(i.meioId) || {}).nome || '')}${i.parcelas > 1 ? ` · ${i.parcelas}x de ${brl(E.splitParcelas(i.valor, i.parcelas)[0])}` : ''}</span></span><span class="amt">${brl(i.valor)}</span></div>`).join('')}</div>` : ''}
         ${p.ok.prefs.inicioAcomp ? `<div class="hint">${ic('calendar')}<span>Relatórios e totais passam a contar a partir de ${esc(mesNome(p.ok.prefs.inicioAcomp))}.</span></div>` : ''}
-        ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
+        ${p.ok.novosMeios.map((x) => `<div class="hint">${ic('card')}<span>Nova forma de pagamento: ${esc(x.nome)}</span></div>`).join('')}
+        ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : k === 'finais' ? `reconhece os finais ${v.map((f) => '••' + f).join(', ')}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : k === 'inicio' ? `começa em ${mesNome(v)}` : k === 'dia' ? `cobrança no dia ${esc(v)}` : k === 'valores' && Array.isArray(v) ? v.map((x) => `${mesNome(x.desde)} em diante: ${brl(x.valor)}${x.meioId ? ` no ${esc((meioById(x.meioId) || {}).nome || x.meioId)}` : ` no ${esc((meioById(f.set.meioId || f.r.meioId) || {}).nome || '')}`}`).join('; ') : `${esc(k)} = ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
         ${p.ok.cats ? `<div class="hint">${ic('tag')}<span>Categorias atualizadas (${p.ok.cats.length} categorias).</span></div>` : ''}
@@ -1752,9 +1760,9 @@
         for (const r of p.recatFixos) saveRec(r);
         for (const it of p.apagar) { const r = clone(it); r.excluido = true; r.excluidoEm = Date.now(); saveItem(r, null); }
         if (Object.keys(p.prefs).length) savePrefs(p.prefs);
-        if (p.meios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); saveMeios(lista); }
+        if (p.meios.length || p.novosMeios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); lista.push(...p.novosMeios); saveMeios(lista); }
         for (const f of p.fixos) { const r = clone(f.r); if (f.excluir) r.excluido = true; Object.assign(r, f.set); saveRec(r); }
-        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.apagar.length ? `, ${p.apagar.length} apagados` : ''}${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}.`);
+        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.apagar.length ? `, ${p.apagar.length} apagados` : ''}${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}${p.novosMeios.length ? ' e nova forma de pagamento criada' : ''}.`);
         setTab('cartoes'); break;
       }
       case 'lock-on': ligarTrava(); break;
