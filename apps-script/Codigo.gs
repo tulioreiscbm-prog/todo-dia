@@ -8,9 +8,9 @@
  * O passo a passo completo está no README do repositório.
  */
 
-const VERSAO_SCRIPT = '1.2.0';
+const VERSAO_SCRIPT = '1.2.1';
 // o que este programa sabe guardar além do básico (o app confere antes de usar)
-const RECURSOS = ['espolio', 'parcela_inicial', 'caixa', 'extras'];
+const RECURSOS = ['espolio', 'parcela_inicial', 'caixa', 'extras', 'diag'];
 const ABAS = {
   lanc: {
     nome: 'Lançamentos',
@@ -73,12 +73,20 @@ function responder_(fn) {
 // ---------------------------------------------------------------- notificações (chave só de inclusão)
 // O celular manda título e texto da notificação com a "chave das notificações". Essa chave só consegue
 // acrescentar uma linha na Caixa de entrada: não lê nem altera nenhum outro dado.
+// Guarda só o resultado da última chamada (sem o conteúdo), para o app mostrar onde está travando.
+function registrarChamada_(resultado, p) {
+  try {
+    PropertiesService.getScriptProperties().setProperty('NOTIF_ULTIMA', JSON.stringify({ em: Date.now(), resultado: resultado, app: String((p && p.app) || '').slice(0, 20) }));
+  } catch (e) { /* ok */ }
+}
 function receberNotificacao_(p) {
   const chave = PropertiesService.getScriptProperties().getProperty('CHAVE_NOTIF');
-  if (!chave || String(p.nk) !== chave) throw erro_('Chave inválida.', 'chave');
-  const titulo = String(p.titulo || '').slice(0, 120).trim();
-  const texto = String(p.texto || '').slice(0, 300).trim();
-  if (!texto && !titulo) throw erro_('notificação vazia');
+  if (!chave || String(p.nk) !== chave) { registrarChamada_('chave', p); throw erro_('Chave inválida.', 'chave'); }
+  const limpa = function (v) { const t = String(v || '').trim(); return /^\[[a-z_]+\]$/i.test(t) ? '' : t; }; // texto mágico não preenchido
+  const titulo = limpa(p.titulo).slice(0, 120);
+  const texto = limpa(p.texto).slice(0, 300);
+  // chamada sem conteúdo = teste do MacroDroid ("Testar ações"): prova que o caminho até a planilha funciona
+  if (!texto && !titulo) { registrarChamada_('vazia', p); return { ok: true, teste: true }; }
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -90,11 +98,12 @@ function receberNotificacao_(p) {
     const agora = Date.now();
     // a mesma notificação pode chegar duas vezes (atualização do aviso): ignora repetida em 10 minutos
     const rep = linhas.some(function (o) { return txt_(o.titulo) === titulo && txt_(o.texto) === texto && agora - num_(o.recebido_em) < 600000; });
-    if (rep) return { ok: true, repetida: true };
+    if (rep) { registrarChamada_('repetida', p); return { ok: true, repetida: true }; }
     const id = 'N' + agora.toString(36) + Math.floor(Math.random() * 1296).toString(36);
     const head = sh.getDataRange().getValues()[0];
     const obj = { id: id, recebido_em: agora, app: String(p.app || '').slice(0, 40), titulo: titulo, texto: texto, status: '', atualizado_em: agora };
     sh.appendRow(head.map(function (h) { return obj[h] === undefined ? '' : obj[h]; }));
+    registrarChamada_('ok', p);
     return { ok: true, id: id };
   } finally {
     lock.releaseLock();
@@ -204,6 +213,7 @@ function tudo_() {
     config: config,
     caixa: caixaPendente_(ss),
     temChaveNotif: !!PropertiesService.getScriptProperties().getProperty('CHAVE_NOTIF'),
+    notifUltima: json_(PropertiesService.getScriptProperties().getProperty('NOTIF_ULTIMA'), null),
     planilhaUrl: ss.getUrl(),
     agora: Date.now(),
     versao: VERSAO_SCRIPT,

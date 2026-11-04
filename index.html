@@ -1077,7 +1077,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1247,7 +1247,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
   }
   function receber(dados) {
     if (!dados) return;
-    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '', recursos: dados.recursos || [], versao: dados.versao || '', caixa: dados.caixa || [], temChaveNotif: !!dados.temChaveNotif };
+    S.server = { lancamentos: dados.lancamentos || [], fixos: dados.fixos || [], config: dados.config || {}, planilhaUrl: dados.planilhaUrl || '', recursos: dados.recursos || [], versao: dados.versao || '', caixa: dados.caixa || [], temChaveNotif: !!dados.temChaveNotif, notifUltima: dados.notifUltima || null };
     S.lastSync = Date.now();
     lsSet(LS.data, { server: S.server, at: S.lastSync });
   }
@@ -2153,7 +2153,16 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const url = (S.conn && S.conn.url) || '';
     const copia = (rot, val) => `<div class="field"><span class="lbl">${rot}</span><div class="row" style="gap:8px"><input class="inp mono-in" readonly value="${esc(val)}" style="font-family:ui-monospace,monospace;font-size:13px"><button class="icon-btn" data-act="copiar" data-v="${esc(val)}" aria-label="Copiar ${rot}">${ic('copy')}</button></div></div>`;
     const pend = caixa().length;
+    const u = S.server.notifUltima;
+    const quando = u ? new Date(u.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    const diag = !temRecurso('diag') ? '' : !u
+      ? `<div class="hint">${ic('alert')}<span><b>Nenhuma chamada do MacroDroid chegou à planilha ainda.</b> Se você já testou, confira o endereço (URL) na ação do MacroDroid.</span></div>`
+      : ({ ok: `<div class="hint">${ic('check')}<span><b>Funcionando.</b> Última compra recebida em ${quando}.</span></div>`,
+        repetida: `<div class="hint">${ic('check')}<span><b>Funcionando.</b> Em ${quando} chegou um aviso repetido, ignorado.</span></div>`,
+        vazia: `<div class="hint">${ic('info')}<span><b>O caminho até a planilha funciona</b> (teste de ${quando}, sem conteúdo). Se as compras de verdade não chegam, o MacroDroid não está percebendo a notificação da Carteira: confira o gatilho e o acesso a notificações.</span></div>`,
+        chave: `<div class="hint">${ic('alert')}<span><b>Em ${quando} o MacroDroid chamou com a chave errada.</b> Gere a chave aqui de novo e cole no parâmetro <code>nk</code> do MacroDroid.</span></div>` })[u.resultado] || '';
     return `<div class="stack">
+      ${diag}
       ${pend ? `<button class="btn pri" data-act="sub" data-sub="caixa">${ic('bell')}Revisar ${pend === 1 ? '1 compra' : pend + ' compras'}</button>` : ''}
       <p class="small ink2" style="margin:0">Quando você paga com o celular, a Carteira do Google mostra uma notificação com o estabelecimento, o valor e o final do cartão. O app MacroDroid lê só essa notificação e manda para a sua planilha. Ao abrir o Todo dIA, você revisa e lança.</p>
       <div class="card stack" style="gap:10px"><b>1. Chave das notificações</b>

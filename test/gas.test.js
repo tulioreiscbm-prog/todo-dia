@@ -27,7 +27,7 @@ test('planilha antiga ganha as colunas novas no fim e guarda espólio e parcela 
   const lido = r.dados.lancamentos.find((i) => i.id === 'IMP-teste');
   assert.equal(lido.espolio, true); assert.equal(lido.parcelaIni, 3); assert.equal(lido.parcelas, 2);
   assert.equal(r.dados.fixos.find((f) => f.id === 'fx').espolio, true);
-  assert.deepEqual(r.dados.recursos, ['espolio', 'parcela_inicial', 'caixa', 'extras']);
+  assert.deepEqual(r.dados.recursos, ['espolio', 'parcela_inicial', 'caixa', 'extras', 'diag']);
 });
 
 test('lançamento comum não ganha espólio nem parcela inicial', () => {
@@ -66,4 +66,18 @@ test('extras: com quem foi dividido vai e volta da planilha', () => {
   assert.deepEqual(r.dados.lancamentos.find((i) => i.id === 'Ldiv').extras, { divCom: 'outros', divNome: 'Ana' });
   assert.deepEqual(r.dados.fixos.find((f) => f.id === 'fx2').extras, { divCom: 'familia' });
   assert.equal(r.dados.lancamentos.find((i) => i.id === 'IMP-teste'), undefined);
+});
+
+test('diagnóstico: a planilha registra a última chamada do MacroDroid, mesmo vazia ou com chave errada', () => {
+  const amb = ambiente(false);
+  const get = (parameter) => { amb.ctx.__e = { parameter }; return JSON.parse(vm.runInContext('doGet(__e)', amb.ctx).text); };
+  const nk = amb.post([{ t: 'gerar_chave_notif' }]).aplicadas[0].chaveNotif;
+  get({ nk: 'errada', titulo: 'x', texto: 'y' });
+  assert.equal(amb.post([]).dados.notifUltima.resultado, 'chave');
+  const t = get({ nk, app: 'carteira', titulo: '[notification_title]', texto: '' });
+  assert.equal(t.teste, true);
+  const d = amb.post([]).dados;
+  assert.equal(d.notifUltima.resultado, 'vazia'); assert.equal(d.caixa.length, 0);
+  get({ nk, app: 'carteira', titulo: 'Loja', texto: 'R$ 1,00 com cartão ••4298' });
+  assert.equal(amb.post([]).dados.notifUltima.resultado, 'ok');
 });
