@@ -303,3 +303,17 @@ test('débito automático é uma forma de pagamento própria', () => {
   const occ = E.expandir({ meios, itens: [{ id: 'x', tipo: 'despesa', desc: 'Copasa', valor: 9840, data: '2026-11-20', meioId: 'inter-automatico', catId: 'casa', subId: 'agua' }], recorrentes: [] }, '2026-11', '2026-11', '2026-11-21');
   assert.deepEqual([occ[0].fatura, occ[0].comp, occ[0].previsto], [null, '2026-11', false]);
 });
+
+test('dividido: família ou outras pessoas', () => {
+  const meios = [{ id: 'pix', tipo: 'pix' }];
+  const itens = [
+    { id: 'a', tipo: 'despesa', desc: 'Gasolina', valor: 13890, data: '2026-11-02', meioId: 'pix', div: 2 },
+    { id: 'b', tipo: 'despesa', desc: 'Energia Guarapari', valor: 11317, data: '2026-11-03', meioId: 'pix', div: 5, espolio: true },
+    { id: 'c', tipo: 'despesa', desc: 'Jantar', valor: 20000, data: '2026-11-03', meioId: 'pix', div: 2, extras: { divCom: 'outros', divNome: 'Ana' } },
+    { id: 'd', tipo: 'despesa', desc: 'Presente da mãe', valor: 30000, data: '2026-11-03', meioId: 'pix', div: 3, extras: { divCom: 'familia' } },
+    { id: 'e', tipo: 'despesa', desc: 'Pão', valor: 1000, data: '2026-11-03', meioId: 'pix' },
+  ];
+  const occ = E.expandir({ meios, itens, recorrentes: [] }, '2026-11', '2026-11', '2026-11-03');
+  const com = Object.fromEntries(occ.map((o) => [o.refId, [o.divCom, o.divNome]]));
+  assert.deepEqual(com, { a: ['outros', ''], b: ['familia', ''], c: ['outros', 'Ana'], d: ['familia', ''], e: [null, ''] });
+});

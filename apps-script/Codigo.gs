@@ -8,20 +8,20 @@
  * O passo a passo completo está no README do repositório.
  */
 
-const VERSAO_SCRIPT = '1.1.0';
+const VERSAO_SCRIPT = '1.2.0';
 // o que este programa sabe guardar além do básico (o app confere antes de usar)
-const RECURSOS = ['espolio', 'parcela_inicial', 'caixa'];
+const RECURSOS = ['espolio', 'parcela_inicial', 'caixa', 'extras'];
 const ABAS = {
   lanc: {
     nome: 'Lançamentos',
     cols: ['id', 'tipo', 'data', 'descricao', 'valor', 'meio', 'categoria', 'subcategoria', 'parcelas', 'dividido_por',
-      'recebido', 'obs', 'fonte', 'criado_em', 'atualizado_em', 'excluido', 'espolio', 'parcela_inicial'],
+      'recebido', 'obs', 'fonte', 'criado_em', 'atualizado_em', 'excluido', 'espolio', 'parcela_inicial', 'extras'],
     texto: ['id', 'tipo', 'data', 'descricao', 'meio', 'categoria', 'subcategoria', 'recebido', 'obs', 'fonte'],
   },
   fixos: {
     nome: 'Fixos',
     cols: ['id', 'tipo', 'descricao', 'categoria', 'subcategoria', 'meio', 'dia', 'inicio', 'fim', 'dividido_por',
-      'valores', 'excecoes', 'recebidos', 'atualizado_em', 'excluido', 'espolio'],
+      'valores', 'excecoes', 'recebidos', 'atualizado_em', 'excluido', 'espolio', 'extras'],
     texto: ['id', 'tipo', 'descricao', 'categoria', 'subcategoria', 'meio', 'inicio', 'fim', 'valores', 'excecoes', 'recebidos'],
   },
   config: { nome: 'Config', cols: ['chave', 'valor', 'atualizado_em'], texto: ['chave', 'valor'] },
@@ -137,6 +137,12 @@ function garantirColunas_(sh, def) {
   while (n > 0 && head[n - 1] === '') n--;
   sh.getRange(1, n + 1, 1, faltam.length).setValues([faltam]);
 }
+// campos novos do app (ex.: com quem foi dividido) vão juntos na coluna "extras", em texto JSON
+function extras_(v) { const o = json_(v, null); return o && typeof o === 'object' && !Array.isArray(o) ? o : null; }
+function extrasTxt_(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o) || !Object.keys(o).length) return '';
+  const t = JSON.stringify(o); return t.length <= 2000 ? t : '';
+}
 function sim_(v) { return v === true || v === 1 || String(v).toUpperCase() === 'TRUE'; }
 function linhas_(ss, def) {
   const sh = aba_(ss, def);
@@ -172,6 +178,7 @@ function lancDeLinha_(o) {
   };
   if (sim_(o.espolio)) it.espolio = true;
   if (num_(o.parcela_inicial) > 1) it.parcelaIni = Math.round(num_(o.parcela_inicial));
+  const ex = extras_(o.extras); if (ex) it.extras = ex;
   if (rec && rec.recebido) it.recebido = true;
   if (rec && rec.recebidos) it.recebidos = rec.recebidos;
   if (o.excluido === true || String(o.excluido).toUpperCase() === 'TRUE' || o.excluido === 1) { it.excluido = true; it.excluidoEm = num_(o.atualizado_em); }
@@ -184,7 +191,7 @@ function fixoDeLinha_(o) {
     inicio: ym_(o.inicio), fim: ym_(o.fim) || null, div: Math.max(1, num_(o.dividido_por) || 1),
     valores: json_(o.valores, []), excecoes: json_(o.excecoes, {}), recebidos: json_(o.recebidos, {}),
     atualizadoEm: num_(o.atualizado_em), excluido: o.excluido === true || String(o.excluido).toUpperCase() === 'TRUE',
-    espolio: sim_(o.espolio),
+    espolio: sim_(o.espolio), extras: extras_(o.extras) || undefined,
   };
 }
 function tudo_() {
@@ -214,7 +221,7 @@ function linhaDeLanc_(it) {
     categoria: it.catId || '', subcategoria: it.subId || '', parcelas: it.parcelas || 1, dividido_por: it.div || 1,
     recebido: Object.keys(rec).length ? JSON.stringify(rec) : '', obs: it.obs || '', fonte: it.fonteCat || '',
     criado_em: it.criadoEm || Date.now(), atualizado_em: it.atualizadoEm || Date.now(), excluido: !!it.excluido,
-    espolio: !!it.espolio, parcela_inicial: it.parcelaIni > 1 ? it.parcelaIni : '',
+    espolio: !!it.espolio, parcela_inicial: it.parcelaIni > 1 ? it.parcelaIni : '', extras: extrasTxt_(it.extras),
   };
 }
 function linhaDeFixo_(f) {
@@ -222,7 +229,7 @@ function linhaDeFixo_(f) {
     id: f.id, tipo: f.tipo || 'despesa', descricao: f.desc || '', categoria: f.catId || '', subcategoria: f.subId || '',
     meio: f.meioId || '', dia: f.dia || 1, inicio: f.inicio || '', fim: f.fim || '', dividido_por: f.div || 1,
     valores: JSON.stringify(f.valores || []), excecoes: JSON.stringify(f.excecoes || {}), recebidos: JSON.stringify(f.recebidos || {}),
-    atualizado_em: f.atualizadoEm || Date.now(), excluido: !!f.excluido, espolio: !!f.espolio,
+    atualizado_em: f.atualizadoEm || Date.now(), excluido: !!f.excluido, espolio: !!f.espolio, extras: extrasTxt_(f.extras),
   };
 }
 function validarLanc_(it) {

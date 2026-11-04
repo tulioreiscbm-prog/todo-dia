@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.1.1';
+  const VERSION = '1.2.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -259,7 +259,7 @@
     const parc = [];
     if (o.parcela) parc.push(`parcela ${o.parcela[0]}/${o.parcela[1]}`);
     if (o.parcela && !o.parcelaAntiga && o.dataCompra && o.dataCompra !== o.data) parc.push(`compra ${dataCurta(o.dataCompra)}`);
-    if (o.div > 1) tags.push(`÷${o.div}`);
+    if (o.div > 1) tags.push(`÷${o.div} ${comQuem(o)}`);
     if (o.espolio) tags.push('espólio');
     const sub = [...parc, subSo(o.catId, o.subId) || catSo(o.catId), meio ? meio.nome : '', ...tags].filter(Boolean).join(' · ');
     const isRess = o.tipo === 'ressarcimento';
@@ -271,6 +271,13 @@
       <span class="grow"><span class="t" style="display:block">${esc(o.desc || 'Sem descrição')}</span><span class="s" style="display:block">${esc(sub)}</span></span>
       <span class="amt ${isIn ? 'in' : ''}">${val}${small}</span></button>`;
   }
+  // "Dividido com": família ou outra pessoa (nome opcional)
+  function divComHtml(x, act, inputId) {
+    const com = E.divisaoCom(x, x.div), nome = (x.extras && x.extras.divNome) || '';
+    return `<div class="field" style="gap:8px"><span class="lbl">Dividido com</span><div class="chips"><button class="chip" data-act="${act}" data-v="familia" aria-pressed="${com === 'familia'}">${ic('users').replace('<svg', '<svg style="width:15px;height:15px"')}Família</button><button class="chip" data-act="${act}" data-v="outros" aria-pressed="${com === 'outros'}">Outra pessoa</button></div>
+      ${com === 'outros' ? `<input class="inp" id="${inputId}" value="${esc(nome)}" placeholder="Nome (opcional), ex.: Ana" autocomplete="off" maxlength="40">` : ''}</div>`;
+  }
+  const comQuem = (o) => (o.divCom === 'familia' ? 'família' : o.divNome || 'outra pessoa');
   // item de fatura: sem ícone, descrição inteira e a parcela sempre visível
   function faturaRow(o) {
     const linha2 = [o.parcela ? `parcela ${o.parcela[0]}/${o.parcela[1]}` : o.fixo ? 'fixo' : o.tipo === 'ajuste' ? 'ajuste' : `compra ${dataCurta(o.dataCompra || o.data)}`,
@@ -288,7 +295,7 @@
     const n = S.outbox.length;
     if (S.net === 'erro' && S.syncErr) out.push(`<div class="banner">${ic('alert')}<span>${esc(S.syncErr)} <button data-act="sub" data-sub="conexao">Ver conexão</button></span></div>`);
     if (n && S.net !== 'sync') out.push(`<div class="banner">${ic('cloud')}<span>${n === 1 ? '1 alteração guardada' : n + ' alterações guardadas'} no aparelho, esperando a internet para ir para a planilha. <button data-act="flush">Enviar agora</button></span></div>`);
-    if (S.conn && S.lastSync && !temRecurso('espolio')) out.push(`<div class="banner">${ic('alert')}<span>O programa da sua planilha está desatualizado: a marcação de espólio e as parcelas antigas ainda não são guardadas. <button data-act="sub" data-sub="sobre">Como atualizar</button></span></div>`);
+    if (S.conn && S.lastSync && !temRecurso('extras')) out.push(`<div class="banner">${ic('alert')}<span>O programa da sua planilha está desatualizado: algumas informações novas (como com quem você dividiu um gasto) ainda não ficam guardadas. <button data-act="sub" data-sub="sobre">Como atualizar</button></span></div>`);
     return out.join('');
   }
   const temRecurso = (r) => ((S.server && S.server.recursos) || []).includes(r);
@@ -421,7 +428,8 @@
       ${totVencem ? `<section class="section"><div class="sec-h"><h2>A pagar em ${esc(MESES[+ym.slice(5) - 1])} de ${ym.slice(0, 4)}</h2><b class="num">${brl(totVencem)}</b></div>
         <div class="card list" style="padding-block:2px">${vencem.map((x) => { const dv = E.diffDays(t, x.f.vence); return `<button class="li fat" data-act="go-card-ref" data-id="${esc(x.m.id)}" data-ref="${esc(ym)}"><span class="grow"><span class="t"><i class="dot" style="background:${esc(x.m.cor || 'var(--accent)')}"></i>${esc(x.m.nome)}</span><span class="s">vence ${dataCurta(x.f.vence)}/${x.f.vence.slice(2, 4)} · ${dv > 0 ? `em ${dv} ${dv === 1 ? 'dia' : 'dias'}` : dv === 0 ? 'hoje' : 'já venceu'}</span></span><span class="amt">${brl(x.tot)}</span></button>`; }).join('')}</div></section>` : ''}
       ${cards ? `<section class="section"><div class="sec-h"><h2>Faturas abertas</h2><button class="link" data-act="tab" data-tab="cartoes">Ver cartões</button></div><div class="cards-row">${cards}</div></section>` : ''}
-      ${totRec ? `<button class="card row" data-act="sub" data-sub="receber" style="text-align:left"><span class="mono rec">${ic('users')}</span><span class="grow"><b style="display:block">A receber da família</b><span class="small muted">${receber.length} ${receber.length === 1 ? 'valor pendente' : 'valores pendentes'} (divididos e ressarcimentos)</span></span><b class="num">${brl(totRec)}</b>${ic('right', 'chev')}</button>` : ''}
+      ${totRec ? (() => { const fam = E.sum(receber.filter((o) => o.divCom === 'familia'), (o) => o.receber), out = totRec - fam;
+        return `<button class="card row" data-act="sub" data-sub="receber" style="text-align:left"><span class="mono rec">${ic('users')}</span><span class="grow"><b style="display:block">A receber</b><span class="small muted">${[fam ? `família ${brl(fam)}` : '', out ? `outras pessoas ${brl(out)}` : ''].filter(Boolean).join(' · ')}</span></span><b class="num">${brl(totRec)}</b>${ic('right', 'chev')}</button>`; })() : ''}
       ${prox.length ? `<section class="section"><div class="sec-h"><h2>Próximos 7 dias</h2></div><div class="card list" style="padding-block:4px">${prox.map((o) => occRow(o, { noDim: true })).join('')}</div></section>` : ''}
       <section class="section"><div class="sec-h"><h2>Onde foi o dinheiro</h2>${cats.length ? '<button class="link" data-act="tab" data-tab="relatorios">Ver tudo</button>' : ''}</div>
         <div class="card">${cats.length ? cats.map((c) => `<button class="hbar" data-act="go-cat" data-cat="${esc(c.catId)}"><span class="top-l"><b>${esc(catSo(c.catId))}</b><span>${brl(c.total)}</span></span><span class="track"><span class="fill" style="width:${(c.total / maxc) * 100}%"></span></span></button>`).join('')
@@ -630,7 +638,8 @@
         ${espCats.map((c) => `<div class="row between small"><span class="ink2">${esc(catSo(c.catId))}</span><span class="num">${brl(c.total)}</span></div>`).join('')}
         <button class="btn sm" data-act="go-espolio">Ver lançamentos do espólio</button></div></section>` : ''}
       ${div.length ? `<section class="section"><div class="sec-h"><h2>Gastos divididos</h2></div>
-        <div class="card stack" style="gap:8px"><div class="row between small"><span class="ink2">Você pagou</span><b class="num">${brl(pago)}</b></div>
+        <div class="card stack" style="gap:8px">${[['familia', 'Com a família'], ['outros', 'Com outras pessoas']].map(([k, t]) => { const g = div.filter((o) => o.divCom === k); return g.length ? `<div class="row between small"><span class="ink2">${t} (sua parte)</span><b class="num">${brl(E.sum(g, (o) => o.minha))}</b></div>` : ''; }).join('')}
+        <div class="row between small"><span class="ink2">Você pagou</span><b class="num">${brl(pago)}</b></div>
         <div class="row between small"><span class="ink2">Sua parte (entra nos relatórios)</span><b class="num">${brl(minha)}</b></div>
         <div class="row between small"><span class="ink2">Ainda a receber</span><b class="num">${brl(recP)}</b></div>
         <button class="btn sm" data-act="sub" data-sub="receber">${ic('users')}Ver o que falta receber</button></div></section>` : ''}
@@ -647,12 +656,13 @@
     const pend = d.occ.filter((o) => rx(o) && !o.recebido && o.comp <= ym && !o.previsto);
     const ok = d.occ.filter((o) => rx(o) && o.recebido).slice(0, 30);
     const row = (o, done) => `<div class="li"><span class="mono ${o.fixo ? 'rec' : ''}">${o.fixo ? ic('repeat') : esc(iniciais(o.desc))}</span>
-      <span class="grow"><span class="t" style="display:block">${esc(o.desc)}</span><span class="s" style="display:block">${esc(mesCurto(o.comp))} · ${o.tipo === 'ressarcimento' ? 'ressarcimento combinado' : `pagou ${brl(o.valor)} ÷ ${o.div} · sua parte ${brl(o.minha)}`}</span></span>
+      <span class="grow"><span class="t" style="display:block">${esc(o.desc)}</span><span class="s" style="display:block">${esc(mesCurto(o.comp))} · ${o.tipo === 'ressarcimento' ? 'ressarcimento combinado' : `pagou ${brl(o.valor)} ÷ ${o.div} · sua parte ${brl(o.minha)}`}${o.divCom === 'outros' && o.divNome ? ` · ${esc(o.divNome)}` : ''}</span></span>
       <span class="amt">${brl(o.receber)}<small><button class="small" style="color:var(--accent-ink);font-weight:750" data-act="recebido" data-key="${esc(o.key)}" data-v="${done ? 0 : 1}">${done ? 'desfazer' : 'recebi'}</button></small></span></div>`;
     return `<div class="stack">
-      <p class="small ink2" style="margin:0">Gastos que você pagou inteiros e divide com a família, mais os ressarcimentos combinados. Nos relatórios entra só a sua parte. Marque "recebi" quando o dinheiro chegar.</p>
+      <p class="small ink2" style="margin:0">Gastos que você pagou inteiros e dividiu, mais os ressarcimentos combinados. Nos relatórios entra só a sua parte. Marque "recebi" quando o dinheiro chegar.</p>
       <div class="card hero"><span class="eyebrow">Total a receber</span><div class="big num">${brlParts(E.sum(pend, (o) => o.receber)).join('')}</div></div>
-      <div class="card list" style="padding-block:2px">${pend.length ? pend.map((o) => row(o, false)).join('') : emptyState('Tudo recebido', 'Nenhuma parte pendente.')}</div>
+      ${pend.length ? [['familia', 'Da família'], ['outros', 'De outras pessoas']].map(([k, t]) => { const g = pend.filter((o) => (o.divCom || 'familia') === k); return g.length ? `<section class="section"><div class="sec-h"><h2>${t}</h2><b class="num">${brl(E.sum(g, (o) => o.receber))}</b></div><div class="card list" style="padding-block:2px">${g.map((o) => row(o, false)).join('')}</div></section>` : ''; }).join('')
+        : `<div class="card list" style="padding-block:2px">${emptyState('Tudo recebido', 'Nenhuma parte pendente.')}</div>`}
       ${ok.length ? `<details class="tbl"><summary>Já recebidos (${ok.length})</summary><div class="card list" style="padding-block:2px;margin-top:8px">${ok.map((o) => row(o, true)).join('')}</div></details>` : ''}
     </div>`;
   }
@@ -683,7 +693,7 @@
         ${item('regras', 'brain', 'O que o app aprendeu', `${Object.keys(S.cfg.regras || {}).length} descrições memorizadas`)}
       </div>
       <div class="card list" style="padding-block:2px">
-        ${item('receber', 'users', 'A receber da família', 'Divididos e ressarcimentos')}
+        ${item('receber', 'users', 'A receber', 'Da família e de outras pessoas')}
         ${item('conexao', 'cloud', 'Sua planilha e conexão', S.lastSync ? 'Sincronizado ' + new Date(S.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Ainda não sincronizado')}
         ${item('notif', 'bell', 'Compras da Carteira do Google', S.server.temChaveNotif ? `Ligado · ${caixa().length} para revisar` : 'Lançar sozinho a partir das notificações')}
         ${item('importar', 'download', 'Importar lançamentos', 'Cole um bloco preparado pelo Claude')}
@@ -794,7 +804,7 @@
         <p style="margin:0"><b style="color:var(--ink)">Seus dados.</b> Ficam numa planilha Google sua. O site só tem o programa; sem a sua chave, ninguém vê nada.</p>
       </div>
       <div class="card stack small ink2" style="gap:8px"><b style="color:var(--ink)">Programa da planilha ${S.server && S.server.versao ? `(versão ${esc(S.server.versao)})` : ''}</b>
-        ${temRecurso('espolio') ? '<p style="margin:0">Atualizado.</p>' : `<p style="margin:0">Desatualizado. Para atualizar: abra a planilha › Extensões › Apps Script › arquivo Código.gs › apague tudo e cole o programa novo › Salvar › Implantar › Gerenciar implantações › lápis › Versão: Nova versão › Implantar. O endereço do app continua o mesmo.</p>`}</div></div>`;
+        ${temRecurso('extras') ? '<p style="margin:0">Atualizado.</p>' : `<p style="margin:0">Desatualizado. Para atualizar: abra a planilha › Extensões › Apps Script › arquivo Código.gs › apague tudo e cole o programa novo › Salvar › Implantar › Gerenciar implantações › lápis › Versão: Nova versão › Implantar. O endereço do app continua o mesmo.</p>`}</div></div>`;
   }
 
   // ---------- Relatório completo (para salvar em PDF) ----------
@@ -890,7 +900,7 @@
     if (R.parcAtivas.length) { const falta = E.sum(R.parcAtivas, (x) => x.falta); const fim = R.parcAtivas.reduce((m, x) => (x.fim > m ? x.fim : m), ''); out.push(`Você tem ${R.parcAtivas.length} ${R.parcAtivas.length === 1 ? 'compra parcelada ativa' : 'compras parceladas ativas'}, com ${brl(falta)} ainda a pagar. A última parcela cai em ${mesNome(fim)}.`); }
     if (R.renda) out.push(`Entradas de ${brl(R.renda)} contra ${brl(R.liquido)} gastos: ${R.renda >= R.liquido ? `sobraram ${brl(R.renda - R.liquido)} (${pct(R.renda - R.liquido, R.renda)}% do que entrou)` : `faltaram ${brl(R.liquido - R.renda)}`}.`);
     if (R.airTotal) out.push(`O Airbnb trouxe <b>${brl(R.airTotal)}</b> (${pct(R.airTotal, R.renda)}% das entradas)${R.airCustos ? `, com ${brl(R.airCustos)} de custos lançados: resultado de ${brl(R.airTotal - R.airCustos)}` : ''}.`);
-    if (R.recPend) out.push(`Há ${brl(R.recPend)} a receber da família (divididos e ressarcimentos ainda não marcados como recebidos).`);
+    if (R.recPend) out.push(`Há ${brl(R.recPend)} a receber (divididos e ressarcimentos ainda não marcados como recebidos).`);
     if (R.media != null) { const ult = R.porMes[R.porMes.length - 2]; if (ult) { const dif = pct(ult.gasto - R.media, R.media); out.push(`Em ${mesNome(ult.ym)} você gastou ${brl(ult.gasto)}, ${Math.abs(dif)}% ${dif >= 0 ? 'acima' : 'abaixo'} da sua média (${brl(R.media)}).`); } }
     return out;
   }
@@ -943,7 +953,7 @@
           ${R.parcAtivas.length ? `<table class="t rp-t"><thead><tr><th>Compra</th><th>Cartão</th><th>Parcela</th><th>Faltam</th><th>A pagar</th><th>Última</th></tr></thead><tbody>${R.parcAtivas.map((x) => `<tr><td>${esc(x.desc)}</td><td>${esc((meioById(x.meioId) || {}).nome || '')}</td><td>${brl(x.valor)}</td><td>${x.restantes} de ${x.total}</td><td>${brl(x.falta)}</td><td>${mesCurto(x.fim)}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted">Nenhuma compra parcelada ativa.</p>'}
           <h3>Próximos 6 meses já comprometidos (sua parte)</h3>${hb(R.comprometido.map((x) => ({ l: cap(mesNome(x.ym)), v: x.fixos + x.parcelas, extra: x.parcelas ? `parcelas ${brl(x.parcelas)}` : '' })))}</section>
         <section class="rp-sec rp-2col"><div><h2>Formas de pagamento</h2>${hb([...R.meiosT.entries()].sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ l: esc((meioById(id) || { nome: 'Outro' }).nome), v, extra: `${pct(v, E.sum([...R.meiosT.values()]))}%` })), { cor: 'var(--s2)' })}</div>
-          <div><h2>Família e divididos</h2><p class="small ink2">Você pagou ${brl(E.sum(R.div, (o) => o.valor))} em gastos divididos; a sua parte foi ${brl(E.sum(R.div, (o) => o.minha))}.</p>
+          <div><h2>Gastos divididos</h2>${[['familia', 'Com a família'], ['outros', 'Com outras pessoas']].map(([k, t]) => { const g = R.div.filter((o) => o.divCom === k); return g.length ? `<p class="small ink2"><b>${t}:</b> você pagou ${brl(E.sum(g, (o) => o.valor))}; a sua parte foi ${brl(E.sum(g, (o) => o.minha))}.</p>` : ''; }).join('') || '<p class="small ink2">Nenhum gasto dividido no período.</p>'}
           <p class="small ink2">Ressarcimentos no período: ${brl(R.totRess)}.</p><p class="small ink2">Ainda a receber: <b>${brl(R.recPend)}</b>.</p></div></section>
         ${R.esp.length ? `<section class="rp-sec"><h2>Espólio</h2><p class="small ink2">Sua parte nos custos do espólio no período: <b>${brl(E.sum(R.esp, (o) => o.minha))}</b>${E.sum(R.esp, (o) => o.valor) !== E.sum(R.esp, (o) => o.minha) ? ` (do total pago de ${brl(E.sum(R.esp, (o) => o.valor))})` : ''}.</p>
           ${hb(R.espCats.map((c) => ({ l: esc(catSo(c.catId)), v: c.total, extra: `${pct(c.total, E.sum(R.esp, (o) => o.minha))}%` })))}
@@ -1181,7 +1191,7 @@
       <details class="more" ${it.parcelas > 1 || it.div > 1 || it.obs ? 'open' : ''}><summary>Parcelas, divisão e observação ${ic('down')}</summary><div class="more-in">
         ${credit ? `<div class="toggle"><span><b>Parcelas</b><br><span class="small muted">${it.parcelas > 1 ? `${it.parcelas}x de ${brl(parc)}` : 'À vista'}</span></span><span class="stepper"><button data-act="l-parc" data-d="-1" aria-label="Menos parcelas">−</button><output>${it.parcelas}x</output><button data-act="l-parc" data-d="1" aria-label="Mais parcelas">+</button></span></div>` : ''}
         ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${it.div > 1 ? `Sua parte ${brl(minha)} · a receber ${brl(it.valor - minha)}` : 'Você paga e outras pessoas te devolvem'}</span></span><button class="switch" role="switch" aria-checked="${it.div > 1}" data-act="l-div" aria-label="Dividido"></button></div>
-        ${it.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas (contando você)</span><span class="stepper"><button data-act="l-divn" data-d="-1" aria-label="Menos pessoas">−</button><output>${it.div}</output><button data-act="l-divn" data-d="1" aria-label="Mais pessoas">+</button></span></div>` : ''}` : ''}
+        ${it.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas (contando você)</span><span class="stepper"><button data-act="l-divn" data-d="-1" aria-label="Menos pessoas">−</button><output>${it.div}</output><button data-act="l-divn" data-d="1" aria-label="Mais pessoas">+</button></span></div>${divComHtml(it, 'l-divcom', 'fDivNome')}` : ''}` : ''}
         <div class="field"><label for="fObs">Observação</label><input class="inp" id="fObs" value="${esc(it.obs || '')}" placeholder="Opcional" autocomplete="off"></div>
       </div></details>
       ${st.err ? `<p class="err" role="alert">${esc(st.err)}</p>` : ''}
@@ -1203,6 +1213,7 @@
     }
     if (dt) dt.onchange = () => { if (/^\d{4}-\d{2}-\d{2}$/.test(dt.value)) { sheetState.it.data = dt.value; renderLanc(); } };
     if (ob) ob.oninput = () => { sheetState.it.obs = ob.value; };
+    const dn = $('#fDivNome'); if (dn) dn.oninput = () => { const it = sheetState.it; it.extras = { ...(it.extras || {}), divCom: 'outros', divNome: dn.value.trim().slice(0, 40) }; };
   }
   function updateLancHints() { // re-render leve só quando necessário
     clearTimeout(updateLancHints.t); updateLancHints.t = setTimeout(() => { if (sheetState && sheetState.kind === 'lanc' && (sheetState.it.parcelas > 1 || sheetState.it.div > 1)) renderLanc(); }, 450);
@@ -1291,7 +1302,7 @@
         <span class="tiny muted">Use para um mês diferente (reajuste pontual, desconto). Para mudar de vez, edite o gasto fixo.</span></div>
       <div class="stack" style="gap:8px">
         <button class="btn pri" data-act="oc-save">${ic('check')}Salvar valor deste mês</button>
-        ${o.div > 1 ? `<button class="btn" data-act="oc-recebido" data-v="${o.recebido ? 0 : 1}">${ic('users')}${o.recebido ? 'Desmarcar recebido' : 'Marcar a parte da família como recebida'}</button>` : ''}
+        ${o.div > 1 ? `<button class="btn" data-act="oc-recebido" data-v="${o.recebido ? 0 : 1}">${ic('users')}${o.recebido ? 'Desmarcar recebido' : 'Marcar a parte dos outros como recebida'}</button>` : ''}
         <button class="btn" data-act="oc-pular">${exc.pular ? 'Voltar a cobrar este mês' : 'Não houve cobrança este mês'}</button>
         <button class="btn ghost" data-act="rec-edit" data-id="${esc(rec.id)}">Editar o gasto fixo</button></div>`;
     openSheet(html, (sh) => { const v = $('#ocVal', sh); v.oninput = () => { const c = centsFromDigits(v.value); sheetState.valor = c; v.value = c ? fmtInput(c) : ''; }; });
@@ -1322,8 +1333,8 @@
       <div class="field"><span class="lbl">${isIn ? 'Entra em' : 'Cobrado em'}</span><div class="chips">${meiosOk.map((m) => `<button class="chip" style="--cc:${esc(m.cor || 'var(--muted)')}" data-act="r-meio" data-id="${esc(m.id)}" aria-pressed="${m.id === r.meioId}"><i></i>${esc(m.nome)}</button>`).join('')}</div></div>
       ${st.isEdit && r.meioId !== st.meioOrig ? `<div class="field"><label for="rMeioDesde">O novo cartão vale a partir de</label><input class="inp" type="month" id="rMeioDesde" value="${esc(st.desdeMeio)}"><span class="tiny muted">Os meses anteriores continuam em ${esc((meioById(st.meioOrig) || {}).nome || 'outro cartão')}, nas faturas em que já caíram.</span></div>` : ''}
       <div class="toggle"><span><b>Dia do mês</b><br><span class="small muted">${isIn ? 'Dia em que entra' : 'Dia da cobrança (define a fatura). O gasto conta desde o dia 1º'}</span></span><span class="stepper"><button data-act="r-dia" data-d="-1" aria-label="Dia anterior">−</button><output>${r.dia}</output><button data-act="r-dia" data-d="1" aria-label="Próximo dia">+</button></span></div>
-      ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${r.div > 1 ? `Sua parte ${brl(Math.round(st.valor / r.div))}` : 'Você paga e a família devolve'}</span></span><button class="switch" role="switch" aria-checked="${r.div > 1}" data-act="r-div" aria-label="Dividido"></button></div>
-        ${r.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas</span><span class="stepper"><button data-act="r-divn" data-d="-1" aria-label="Menos">−</button><output>${r.div}</output><button data-act="r-divn" data-d="1" aria-label="Mais">+</button></span></div>` : ''}` : ''}
+      ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${r.div > 1 ? `Sua parte ${brl(Math.round(st.valor / r.div))}` : 'Você paga e outras pessoas te devolvem'}</span></span><button class="switch" role="switch" aria-checked="${r.div > 1}" data-act="r-div" aria-label="Dividido"></button></div>
+        ${r.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas</span><span class="stepper"><button data-act="r-divn" data-d="-1" aria-label="Menos">−</button><output>${r.div}</output><button data-act="r-divn" data-d="1" aria-label="Mais">+</button></span></div>${divComHtml(r, 'r-divcom', 'rDivNome')}` : ''}` : ''}
       ${r.tipo === 'despesa' ? `<div class="toggle espolio"><span><b>Espólio</b><br><span class="small muted">${r.espolio ? 'Marcado: aparece separado nos relatórios' : 'Marque se é um custo do espólio'}</span></span><button class="switch" role="switch" aria-checked="${!!r.espolio}" data-act="r-esp" aria-label="Espólio"></button></div>` : ''}
       <div class="row" style="gap:10px"><div class="field grow"><label for="rIni">Começa em</label><input class="inp" type="month" id="rIni" value="${esc(r.inicio)}"></div>
         <div class="field grow"><label for="rFim">Termina em (opcional)</label><input class="inp" type="month" id="rFim" value="${esc(r.fim || '')}"></div></div>
@@ -1339,6 +1350,7 @@
     ini.onchange = () => { if (/^\d{4}-\d{2}$/.test(ini.value)) r.inicio = ini.value; };
     fim.onchange = () => { r.fim = /^\d{4}-\d{2}$/.test(fim.value) ? fim.value : null; };
     if (desde) desde.onchange = () => { if (/^\d{4}-\d{2}$/.test(desde.value)) st.desde = desde.value; };
+    const rdn = $('#rDivNome'); if (rdn) rdn.oninput = () => { r.extras = { ...(r.extras || {}), divCom: 'outros', divNome: rdn.value.trim().slice(0, 40) }; };
     const md = $('#rMeioDesde'); if (md) md.onchange = () => { if (/^\d{4}-\d{2}$/.test(md.value)) st.desdeMeio = md.value; };
   }
   // Encerrar a recorrência (escolhendo a última cobrança) ou excluir por completo
@@ -1806,6 +1818,8 @@
       case 'l-parc': st.it.parcelas = Math.min(48, Math.max(1, (st.it.parcelas || 1) + +el.dataset.d)); renderLanc(); break;
       case 'l-esp': st.espManual = true; st.it.espolio = !st.it.espolio; renderLanc(); break;
       case 'l-div': st.divManual = true; st.it.div = st.it.div > 1 ? 1 : ((E.findSub(categorias(), st.it.catId, st.it.subId) || {}).div || 2); renderLanc(); break;
+      case 'l-divcom': { const it = st.it; it.extras = { ...(it.extras || {}), divCom: el.dataset.v }; if (el.dataset.v === 'familia') delete it.extras.divNome; renderLanc(); break; }
+      case 'r-divcom': { const r = st.r; r.extras = { ...(r.extras || {}), divCom: el.dataset.v }; if (el.dataset.v === 'familia') delete r.extras.divNome; renderRec(); break; }
       case 'l-divn': st.divManual = true; st.it.div = Math.min(20, Math.max(2, st.it.div + +el.dataset.d)); renderLanc(); break;
       case 'l-cat': { const it = st.it; openCatPicker(it.tipo, (catId, subId) => { it.catId = catId; it.subId = subId; it.fonteCat = 'manual'; st.catManual = true; const sd = E.findSub(categorias(), catId, subId); if (!st.divManual) it.div = sd && sd.div > 1 ? sd.div : 1; }, { catId: it.catId, subId: it.subId }); break; }
       case 'l-save': { const d = $('#fDesc'); if (d) st.it.desc = d.value; saveLanc(!!el.dataset.more); break; }

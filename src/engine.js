@@ -390,6 +390,15 @@ const Engine = (() => {
     return (h && h.meioId) || rec.meioId;
   }
 
+  // Com quem um gasto foi dividido: 'familia' ou 'outros' (padrão: família quando é espólio)
+  function divisaoCom(x, div) {
+    const ex = (x && x.extras) || {};
+    if (x && x.tipo === 'ressarcimento') return ex.divCom === 'outros' ? 'outros' : 'familia';
+    if (!(div > 1)) return null;
+    if (ex.divCom === 'familia' || ex.divCom === 'outros') return ex.divCom;
+    return x && x.espolio ? 'familia' : 'outros';
+  }
+
   // ---------- Expansão em ocorrências ----------
   // state: { itens: [lanc], recorrentes: [rec], meios: [meio] }
   // retorna ocorrências com competência (comp) no intervalo [de, ate]
@@ -424,6 +433,7 @@ const Engine = (() => {
           recebido: !!(it.recebidos ? it.recebidos[k + 1] : it.recebido),
           fixo: false, parcela: parcelado ? [ini + k, total] : null, parcelaAntiga: ini > 1, fatura: f ? f.ref : null,
           previsto: dataOc > hoje, obs: it.obs || '', espolio: !!it.espolio,
+          divCom: divisaoCom(it, div), divNome: div > 1 ? String((it.extras && it.extras.divNome) || '') : '',
         });
       }
     }
@@ -446,6 +456,7 @@ const Engine = (() => {
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
           fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
+          divCom: divisaoCom(rec, div), divNome: div > 1 ? String((rec.extras && rec.extras.divNome) || '') : '',
         });
       }
     }
@@ -525,7 +536,7 @@ const Engine = (() => {
     pad, iso, parseISO, dim, todayISO, ymOf, addMonthsYM, clampDate, addDays, weekday, diffDays, monthsBetween,
     fatura, faturaPorRef, faturaStatus, splitParcelas, parseValor, fmtBRL, fmtCompact,
     norm, normKey, ruleKey, parse, resolveMeio, classify, findCat, findSub, matchDicionario, matchRegra,
-    falaParaTexto, parseNotificacao, valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
+    divisaoCom, falaParaTexto, parseNotificacao, valorRecorrente, meioRecorrente, expandir, itensFatura, resumoMes, porCategoria, mesesCompletos, media, sum, liquido,
   };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;
