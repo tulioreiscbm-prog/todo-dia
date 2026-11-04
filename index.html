@@ -1077,7 +1077,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -2185,7 +2185,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         ${p.ok.prefs.inicioAcomp ? `<div class="hint">${ic('calendar')}<span>Relatórios e totais passam a contar a partir de ${esc(mesNome(p.ok.prefs.inicioAcomp))}.</span></div>` : ''}
         ${p.ok.novosMeios.map((x) => `<div class="hint">${ic('card')}<span>Nova forma de pagamento: ${esc(x.nome)}</span></div>`).join('')}
         ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : k === 'finais' ? `reconhece os finais ${v.map((f) => '••' + f).join(', ')}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
-        ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : k === 'inicio' ? `começa em ${mesNome(v)}` : k === 'dia' ? `cobrança no dia ${esc(v)}` : k === 'valores' && Array.isArray(v) ? v.map((x) => `${mesNome(x.desde)} em diante: ${brl(x.valor)}${x.meioId ? ` no ${esc((meioById(x.meioId) || {}).nome || x.meioId)}` : ` no ${esc((meioById(f.set.meioId || f.r.meioId) || {}).nome || '')}`}`).join('; ') : `${esc(k)} = ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(', ')}</span></div>`).join('')}
+        ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : k === 'inicio' ? `começa em ${mesNome(v)}` : k === 'dia' ? `cobrança no dia ${esc(v)}` : k === 'meioId' ? `passa a ser cobrado no ${esc((meioById(v) || {}).nome || v)}` : k === 'valores' && Array.isArray(v) ? v.map((x) => `${mesNome(x.desde)} em diante: ${brl(x.valor)}${x.meioId ? ` no ${esc((meioById(x.meioId) || {}).nome || x.meioId)}` : ` no ${esc((meioById(f.set.meioId || f.r.meioId) || {}).nome || '')}`}`).join('; ') : `${esc(k)} = ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
         ${p.ok.cats ? `<div class="hint">${ic('tag')}<span>Categorias atualizadas (${p.ok.cats.length} categorias).</span></div>` : ''}
         ${p.ok.recatItens.length + p.ok.recatFixos.length ? `<div class="hint">${ic('tag')}<span>Mudam de categoria: ${[...p.ok.recatItens, ...p.ok.recatFixos].map((x) => esc(x.desc)).join(', ')}.</span></div>` : ''}
@@ -2748,8 +2748,42 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
   function setTab(tab, sub = null) {
     S.ui.tab = TABS[tab] ? tab : 'inicio'; S.ui.sub = sub;
     lsSet(LS.ui, { tab: S.ui.tab });
-    try { if (location.hash !== '#' + S.ui.tab) history.replaceState(null, '', '#' + S.ui.tab); } catch { /* ok */ }
+    try { if (location.hash !== '#' + S.ui.tab) history.replaceState(history.state, '', '#' + S.ui.tab); } catch { /* ok */ }
     render(); window.scrollTo(0, 0);
+  }
+
+  // ---------- Botão voltar do celular: volta uma tela, em vez de fechar o app ----------
+  // Para cada camada aberta (aba, subtela, relatório, folha) há uma entrada no histórico, mais uma de reserva.
+  // As entradas só são criadas junto com um toque: o Chrome pula entradas criadas sem interação.
+  let guardas = 0, ignorarPops = 0, ignorarHash = false;
+  function camadas() {
+    if (!S.conn || S.locked) return 0;
+    return (S.ui.tab !== 'inicio' ? 1 : 0) + (S.ui.sub && !S.ui.subDe ? 1 : 0) + (S.ui.report ? 1 : 0) + (S.ui.quick ? 1 : 0) + ($('#sheet') ? 1 : 0);
+  }
+  function ajustarGuardas(podeCriar) {
+    const precisa = camadas() + 1;
+    try {
+      if (podeCriar) while (guardas < precisa && guardas < 8) { history.pushState({ todo: 'guarda' }, '', location.href); guardas++; }
+      if (guardas > precisa) { const k = guardas - precisa; guardas = precisa; ignorarPops++; history.go(-k); }
+    } catch { /* ok */ }
+  }
+  function voltarUmaTela() {
+    if (S.locked || !S.conn) return false;
+    const sh = $('#sheet');
+    if (sh) { act('close-sheet', sh).catch(() => closeSheet()); return true; }
+    if (S.ui.quick) { S.ui.quick = null; S.ui.quickText = ''; render(); return true; }
+    if (S.ui.report) { S.ui.report = null; render(); window.scrollTo(0, 0); return true; }
+    if (S.ui.sub) { const de = S.ui.subDe; S.ui.subDe = null; if (de && de !== 'ajustes') setTab(de); else { S.ui.sub = null; render(); window.scrollTo(0, 0); } return true; }
+    if (S.ui.tab !== 'inicio') { setTab('inicio'); return true; }
+    return false;
+  }
+  function aoVoltar() {
+    ignorarHash = true; setTimeout(() => { ignorarHash = false; }, 400);
+    if (ignorarPops > 0) { ignorarPops--; return; }
+    guardas = Math.max(0, guardas - 1);
+    if (voltarUmaTela()) { ajustarGuardas(false); return; }
+    // na tela inicial: sem reserva, o próximo voltar fecha o app
+    toast('Toque em voltar de novo para sair.');
   }
 
   // ---------- Lançamento rápido ----------
@@ -2828,6 +2862,8 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     switch (a) {
       case 'tab': ev.preventDefault(); setTab(el.dataset.tab); break;
       case 'sub': if (el.dataset.sub === 'acomp') { promptSheet('Início do acompanhamento', 'Mês (ano-mês, ex.: 2026-11)', S.cfg.prefs.inicioAcomp || '', (v) => { if (!/^\d{4}-\d{2}$/.test(v)) { toast('Use o formato ano-mês, ex.: 2026-11.'); return; } savePrefs({ inicioAcomp: v, inicioUso: v + '-01' }); toast('Relatórios contam a partir de ' + mesNome(v) + '.'); }); break; }
+        if (el.dataset.sub && !S.ui.sub && S.ui.tab !== 'ajustes') S.ui.subDe = S.ui.tab; // para o voltar levar de onde veio
+        if (!el.dataset.sub && S.ui.subDe) { const de = S.ui.subDe; S.ui.subDe = null; setTab(de); break; }
         if (S.ui.tab !== 'ajustes') S.ui.tab = 'ajustes'; S.ui.sub = el.dataset.sub || null; render(); window.scrollTo(0, 0); break;
       case 'new': S.ui.quick = null; openLanc(); break;
       case 'close-sheet': if (st && st.kind === 'cat' && st.back) { const b = st.back; sheetState = b; closeSheet(true); if (b.kind === 'lanc') renderLanc(); else if (b.kind === 'rec') renderRec(); } else closeSheet(); break;
@@ -3036,19 +3072,21 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       if (el.disabled) return;
       const a = el.dataset.act;
       if (a === 'close-sheet' && el.id === 'scrim' && ev.target !== el) return;
-      act(a, el, ev).catch((e) => { console.error(e); toast('Algo deu errado. Tente de novo.'); });
+      act(a, el, ev).catch((e) => { console.error(e); toast('Algo deu errado. Tente de novo.'); }).finally(() => ajustarGuardas(true));
     });
     document.addEventListener('pointerover', (ev) => { const r = ev.target.closest && ev.target.closest('[data-hit]'); if (r && ev.pointerType === 'mouse') showTip(r); });
     document.addEventListener('pointerdown', (ev) => { const r = ev.target.closest && ev.target.closest('[data-hit]'); if (r) showTip(r); });
     document.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      if (ev.target.dataset.form === 'quick') quickSubmit(ev.target.q.value);
+      if (ev.target.dataset.form === 'quick') Promise.resolve(quickSubmit(ev.target.q.value)).finally(() => ajustarGuardas(true));
       if (ev.target.dataset.form === 'setup') conectar(ev.target.url.value, ev.target.key.value);
     });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('#sheet')) act('close-sheet', $('#sheet'), ev); });
     window.addEventListener('online', () => { S.retryN = 0; sync(); });
     window.addEventListener('offline', () => { S.net = 'offline'; renderSoft(); });
-    window.addEventListener('hashchange', () => { const k = location.hash.replace('#', ''); if (k === 'lancar') openLanc(); else if (TABS[k] && k !== S.ui.tab) setTab(k); });
+    window.addEventListener('hashchange', () => { if (ignorarHash) return; const k = location.hash.replace('#', ''); if (k === 'lancar') openLanc(); else if (TABS[k] && k !== S.ui.tab) setTab(k); });
+    try { history.replaceState({ todo: 'base' }, '', location.href); } catch { /* ok */ }
+    window.addEventListener('popstate', aoVoltar);
     window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installPrompt = e; if (!$('#sheet')) render(); });
     window.addEventListener('appinstalled', () => { S.installPrompt = null; toast('Todo dIA instalado na tela inicial.'); });
     let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(drawCharts, 150); });
