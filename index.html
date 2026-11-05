@@ -1077,7 +1077,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.2.2';
+  const VERSION = '1.3.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -2761,37 +2761,57 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     render(); window.scrollTo(0, 0);
   }
 
-  // ---------- Botão voltar do celular: volta uma tela, em vez de fechar o app ----------
-  // Para cada camada aberta (aba, subtela, relatório, folha) há uma entrada no histórico, mais uma de reserva.
-  // As entradas só são criadas junto com um toque: o Chrome pula entradas criadas sem interação.
-  let guardas = 0, ignorarPops = 0, ignorarHash = false;
+  // ---------- Voltar: sempre para a tela anterior ----------
+  // O app guarda a pilha das telas por onde você passou (aba, subtela, relatório, com o mês, o cartão e a
+  // posição da rolagem). O voltar do celular, e a seta de voltar do app, refazem o caminho de trás para frente.
+  // Folhas (formulários) e a prévia do lançamento rápido fecham primeiro. Para o voltar do celular funcionar,
+  // há uma entrada no histórico do navegador para cada passo; elas só são criadas junto com um toque
+  // (o Chrome pula entradas criadas sem interação).
+  const pilha = [];
+  let guardas = 0, ignorarPops = 0, ignorarHash = false, voltando = false, houveVolta = false;
+  const CAMPOS_TELA = ['tab', 'sub', 'mes', 'relMes', 'relPer', 'relCat', 'cardId', 'faturaRef', 'filtro', 'lancCat'];
+  function fotoTela() { const f = { y: window.scrollY || 0, report: S.ui.report ? clone(S.ui.report) : null }; for (const k of CAMPOS_TELA) f[k] = S.ui[k] === undefined ? null : clone(S.ui[k]); return f; }
+  const chaveTela = (f) => `${f.tab}|${f.sub || ''}|${f.report ? 1 : 0}`;
+  function lembrarSeMudou(antes) {
+    const voltou = houveVolta; houveVolta = false;
+    if (voltou || voltando || !antes || !S.conn || S.locked) return; // a ação foi um "voltar": nada a lembrar
+    if (chaveTela(antes) !== chaveTela(fotoTela())) { pilha.push(antes); if (pilha.length > 40) pilha.shift(); }
+  }
   function camadas() {
     if (!S.conn || S.locked) return 0;
-    return (S.ui.tab !== 'inicio' ? 1 : 0) + (S.ui.sub && !S.ui.subDe ? 1 : 0) + (S.ui.report ? 1 : 0) + (S.ui.quick ? 1 : 0) + ($('#sheet') ? 1 : 0);
+    return pilha.length + (S.ui.quick ? 1 : 0) + ($('#sheet') ? 1 : 0);
   }
   function ajustarGuardas(podeCriar) {
-    const precisa = camadas() + 1;
+    const precisa = camadas() + 1; // +1: o primeiro voltar na tela inicial só avisa
     try {
-      if (podeCriar) while (guardas < precisa && guardas < 8) { history.pushState({ todo: 'guarda' }, '', location.href); guardas++; }
+      if (podeCriar) while (guardas < precisa && guardas < 45) { history.pushState({ todo: 'guarda' }, '', location.href); guardas++; }
       if (guardas > precisa) { const k = guardas - precisa; guardas = precisa; ignorarPops++; history.go(-k); }
     } catch { /* ok */ }
   }
+  // volta uma tela; devolve false quando não há para onde voltar
   function voltarUmaTela() {
     if (S.locked || !S.conn) return false;
     const sh = $('#sheet');
     if (sh) { act('close-sheet', sh).catch(() => closeSheet()); return true; }
     if (S.ui.quick) { S.ui.quick = null; S.ui.quickText = ''; render(); return true; }
-    if (S.ui.report) { S.ui.report = null; render(); window.scrollTo(0, 0); return true; }
-    if (S.ui.sub) { const de = S.ui.subDe; S.ui.subDe = null; if (de && de !== 'ajustes') setTab(de); else { S.ui.sub = null; render(); window.scrollTo(0, 0); } return true; }
-    if (S.ui.tab !== 'inicio') { setTab('inicio'); return true; }
-    return false;
+    const f = pilha.pop(); if (!f) return false;
+    voltando = true; houveVolta = true;
+    try {
+      for (const k of CAMPOS_TELA) S.ui[k] = f[k];
+      S.ui.report = f.report; S.ui.subDe = null;
+      lsSet(LS.ui, { tab: S.ui.tab });
+      try { history.replaceState(history.state, '', '#' + S.ui.tab); } catch { /* ok */ }
+      render();
+      requestAnimationFrame(() => window.scrollTo(0, f.y || 0));
+    } finally { voltando = false; }
+    return true;
   }
   function aoVoltar() {
     ignorarHash = true; setTimeout(() => { ignorarHash = false; }, 400);
     if (ignorarPops > 0) { ignorarPops--; return; }
     guardas = Math.max(0, guardas - 1);
     if (voltarUmaTela()) { ajustarGuardas(false); return; }
-    // na tela inicial: sem reserva, o próximo voltar fecha o app
+    // primeira tela do caminho: o próximo voltar fecha o app
     toast('Toque em voltar de novo para sair.');
   }
 
@@ -2871,8 +2891,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     switch (a) {
       case 'tab': ev.preventDefault(); setTab(el.dataset.tab); break;
       case 'sub': if (el.dataset.sub === 'acomp') { promptSheet('Início do acompanhamento', 'Mês (ano-mês, ex.: 2026-11)', S.cfg.prefs.inicioAcomp || '', (v) => { if (!/^\d{4}-\d{2}$/.test(v)) { toast('Use o formato ano-mês, ex.: 2026-11.'); return; } savePrefs({ inicioAcomp: v, inicioUso: v + '-01' }); toast('Relatórios contam a partir de ' + mesNome(v) + '.'); }); break; }
-        if (el.dataset.sub && !S.ui.sub && S.ui.tab !== 'ajustes') S.ui.subDe = S.ui.tab; // para o voltar levar de onde veio
-        if (!el.dataset.sub && S.ui.subDe) { const de = S.ui.subDe; S.ui.subDe = null; setTab(de); break; }
+        if (!el.dataset.sub && pilha.length) { voltarUmaTela(); break; } // seta de voltar do app = tela anterior
         if (S.ui.tab !== 'ajustes') S.ui.tab = 'ajustes'; S.ui.sub = el.dataset.sub || null; render(); window.scrollTo(0, 0); break;
       case 'new': S.ui.quick = null; openLanc(); break;
       case 'close-sheet': if (st && st.kind === 'cat' && st.back) { const b = st.back; sheetState = b; closeSheet(true); if (b.kind === 'lanc') renderLanc(); else if (b.kind === 'rec') renderRec(); } else closeSheet(); break;
@@ -2880,7 +2899,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       case 'unlock': desbloquear(); break;
       case 'rp-open': S.ui.report = { per: 'tudo' }; render(); window.scrollTo(0, 0); break;
       case 'rp-per': S.ui.report.per = el.dataset.p; render(); break;
-      case 'rp-close': S.ui.report = null; render(); window.scrollTo(0, 0); break;
+      case 'rp-close': if (pilha.length) voltarUmaTela(); else { S.ui.report = null; render(); window.scrollTo(0, 0); } break;
       case 'rp-print': { const old = document.title; document.title = `Todo dIA - relatório ${hoje()}`; try { window.print(); } catch { toast('Não consegui abrir a impressão. Abra o app pelo Chrome e tente de novo.'); } setTimeout(() => { document.title = old; }, 1500); break; }
       case 'imp-ler': { const txt = ($('#impTxt') || {}).value || ''; S.ui.imp = { txt }; try { S.ui.imp.ok = lerImportacao(txt); } catch (e) { S.ui.imp.err = e.message; } render(); break; }
       case 'imp-ok': {
@@ -3081,13 +3100,14 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       if (el.disabled) return;
       const a = el.dataset.act;
       if (a === 'close-sheet' && el.id === 'scrim' && ev.target !== el) return;
-      act(a, el, ev).catch((e) => { console.error(e); toast('Algo deu errado. Tente de novo.'); }).finally(() => ajustarGuardas(true));
+      const antes = fotoTela(); houveVolta = false;
+      act(a, el, ev).catch((e) => { console.error(e); toast('Algo deu errado. Tente de novo.'); }).finally(() => { lembrarSeMudou(antes); ajustarGuardas(true); });
     });
     document.addEventListener('pointerover', (ev) => { const r = ev.target.closest && ev.target.closest('[data-hit]'); if (r && ev.pointerType === 'mouse') showTip(r); });
     document.addEventListener('pointerdown', (ev) => { const r = ev.target.closest && ev.target.closest('[data-hit]'); if (r) showTip(r); });
     document.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      if (ev.target.dataset.form === 'quick') Promise.resolve(quickSubmit(ev.target.q.value)).finally(() => ajustarGuardas(true));
+      if (ev.target.dataset.form === 'quick') { const antes = fotoTela(); houveVolta = false; Promise.resolve(quickSubmit(ev.target.q.value)).finally(() => { lembrarSeMudou(antes); ajustarGuardas(true); }); }
       if (ev.target.dataset.form === 'setup') conectar(ev.target.url.value, ev.target.key.value);
     });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('#sheet')) act('close-sheet', $('#sheet'), ev); });
@@ -3116,7 +3136,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     else if (S.ui.abrirLancar) { S.ui.abrirLancar = false; setTimeout(() => openLanc(), 300); }
   }
   // Exposto só para testes automatizados
-  window.__todo = { S, E, D, render, quickSubmit, openLanc, setTab, itens, sync, trancar };
+  window.__todo = { S, E, D, render, quickSubmit, openLanc, setTab, itens, sync, trancar, nav: () => ({ guardas, pilha: pilha.map(chaveTela), hist: history.length, ignorarPops }) };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 
