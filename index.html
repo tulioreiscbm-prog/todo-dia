@@ -821,6 +821,8 @@ const Engine = (() => {
           fixo: false, parcela: parcelado ? [ini + k, total] : null, parcelaAntiga: ini > 1, fatura: f ? f.ref : null,
           previsto: dataOc > hoje, obs: it.obs || '', espolio: !!it.espolio,
           divCom: divisaoCom(it, div), divNome: div > 1 ? String((it.extras && it.extras.divNome) || '') : '',
+          // parcelado que é contrato (seguro, plano anual): conta como custo fixo até a última parcela
+          custoFixo: it.tipo === 'despesa' && !!(it.extras && it.extras.fixo),
         });
       }
     }
@@ -843,7 +845,7 @@ const Engine = (() => {
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
           fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
-          divCom: divisaoCom(rec, div), divNome: div > 1 ? String((rec.extras && rec.extras.divNome) || '') : '',
+          divCom: divisaoCom(rec, div), divNome: div > 1 ? String((rec.extras && rec.extras.divNome) || '') : '', custoFixo: true,
         });
       }
     }
@@ -879,10 +881,10 @@ const Engine = (() => {
       rendaReal: sum(r.filter((o) => !o.previsto), (o) => o.valor),
       rendaPrev: sum(r.filter((o) => o.previsto), (o) => o.valor),
       receber: sum(m.filter((o) => o.receber > 0 && !o.recebido && (isGasto(o) || isRessarc(o))), (o) => o.receber),
-      fixos: sum(g.filter((o) => o.fixo), (o) => o.minha),
-      parcelas: sum(g.filter((o) => o.parcela), (o) => o.minha),
+      fixos: sum(g.filter((o) => o.fixo || o.custoFixo), (o) => o.minha),
+      parcelas: sum(g.filter((o) => o.parcela && !o.custoFixo), (o) => o.minha),
       espolio: sum(g.filter((o) => o.espolio), (o) => o.minha),
-      variaveis: sum(g.filter((o) => !o.fixo && !o.parcela), (o) => o.minha),
+      variaveis: sum(g.filter((o) => !o.fixo && !o.custoFixo && !o.parcela), (o) => o.minha),
       n: m.filter((o) => o.origem === 'lanc').length,
     };
   }
@@ -1077,7 +1079,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
 (() => {
   'use strict';
   const E = Engine, T = Taxonomy;
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1330,7 +1332,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
   function occRow(o, opts = {}) {
     const meio = meioById(o.meioId);
     const tags = [];
-    if (o.fixo) tags.push('fixo');
+    if (o.fixo) tags.push('fixo'); else if (o.custoFixo) tags.push('custo fixo');
     const parc = [];
     if (o.parcela) parc.push(`parcela ${o.parcela[0]}/${o.parcela[1]}`);
     if (o.parcela && !o.parcelaAntiga && o.dataCompra && o.dataCompra !== o.data) parc.push(`compra ${dataCurta(o.dataCompra)}`);
@@ -1342,7 +1344,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const val = isRess ? '−' + brl(o.valor) : isIn ? '+' + brl(o.valor) : brl(o.tipo === 'ajuste' ? o.valor : o.minha);
     const small = o.div > 1 ? `<small>de ${brl(o.valor)}</small>` : isRess ? '<small>abate dos gastos</small>' : o.previsto ? '<small>previsto</small>' : o.tipo === 'ajuste' ? '<small>ajuste</small>' : '';
     return `<button class="li ${o.previsto && !opts.noDim ? 'dim' : ''}" data-act="open-occ" data-key="${esc(o.key)}">
-      <span class="mono ${o.fixo ? 'rec' : ''} ${isIn ? 'in' : ''}">${o.fixo ? ic('repeat') : esc(iniciais(o.desc))}</span>
+      <span class="mono ${ehFixo(o) ? 'rec' : ''} ${isIn ? 'in' : ''}">${ehFixo(o) ? ic('repeat') : esc(iniciais(o.desc))}</span>
       <span class="grow"><span class="t" style="display:block">${esc(o.desc || 'Sem descrição')}</span><span class="s" style="display:block">${esc(sub)}</span></span>
       <span class="amt ${isIn ? 'in' : ''}">${val}${small}</span></button>`;
   }
@@ -1352,10 +1354,13 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     return `<div class="field" style="gap:8px"><span class="lbl">Dividido com</span><div class="chips"><button class="chip" data-act="${act}" data-v="familia" aria-pressed="${com === 'familia'}">${ic('users').replace('<svg', '<svg style="width:15px;height:15px"')}Família</button><button class="chip" data-act="${act}" data-v="outros" aria-pressed="${com === 'outros'}">Outra pessoa</button></div>
       ${com === 'outros' ? `<input class="inp" id="${inputId}" value="${esc(nome)}" placeholder="Nome (opcional), ex.: Ana" autocomplete="off" maxlength="40">` : ''}</div>`;
   }
+  // custo fixo = fixo cadastrado ou parcelado marcado como contrato (seguro, plano anual)
+  const ehFixo = (o) => !!(o.fixo || o.custoFixo);
+  const ehParcela = (o) => !!o.parcela && !o.custoFixo;
   const comQuem = (o) => (o.divCom === 'familia' ? 'família' : o.divNome || 'outra pessoa');
   // item de fatura: sem ícone, descrição inteira e a parcela sempre visível
   function faturaRow(o) {
-    const linha2 = [o.parcela ? `parcela ${o.parcela[0]}/${o.parcela[1]}` : o.fixo ? 'fixo' : o.tipo === 'ajuste' ? 'ajuste' : `compra ${dataCurta(o.dataCompra || o.data)}`,
+    const linha2 = [o.parcela ? `parcela ${o.parcela[0]}/${o.parcela[1]}${o.custoFixo ? ' · custo fixo' : ''}` : o.fixo ? 'fixo' : o.tipo === 'ajuste' ? 'ajuste' : `compra ${dataCurta(o.dataCompra || o.data)}`,
       subSo(o.catId, o.subId) || catSo(o.catId), o.espolio ? 'espólio' : ''].filter(Boolean).join(' · ');
     const small = o.div > 1 ? `<small>sua parte ${brl(o.minha)}</small>` : '';
     return `<button class="li fat" data-act="open-occ" data-key="${esc(o.key)}">
@@ -1538,9 +1543,9 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const r = E.resumoMes(D().occ, ym);
     if (f === 'gastos') occ = occ.filter((o) => o.tipo === 'despesa');
     if (f === 'entradas') occ = occ.filter((o) => o.tipo === 'receita');
-    if (f === 'fixos') occ = occ.filter((o) => o.fixo);
+    if (f === 'fixos') occ = occ.filter(ehFixo);
     if (f === 'divididos') occ = occ.filter((o) => o.div > 1);
-    if (f === 'parcelas') occ = occ.filter((o) => o.parcela);
+    if (f === 'parcelas') occ = occ.filter(ehParcela);
     if (f === 'espolio') occ = occ.filter((o) => o.espolio);
     if (S.ui.lancCat) occ = occ.filter((o) => o.catId === S.ui.lancCat.catId && (!S.ui.lancCat.subId || o.subId === S.ui.lancCat.subId));
     if (busca) occ = occ.filter((o) => E.normKey(`${o.desc} ${catNome(o.catId, o.subId)} ${(meioById(o.meioId) || {}).nome || ''} ${o.obs}`).includes(busca));
@@ -1577,7 +1582,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const porCartao = sel.map((c) => { const f = E.faturaPorRef(c, ref); const its = E.itensFatura(D().state, c.id, ref, t); return { c, f, its, st: E.faturaStatus(f, t), tot: E.sum(its, (o) => o.valor) }; });
     const its = porCartao.flatMap((x) => x.its);
     const tot = E.sum(its, (o) => o.valor);
-    const comp = { compras: E.sum(its.filter((o) => !o.fixo && !o.parcela && o.tipo !== 'ajuste'), (o) => o.valor), parcelas: E.sum(its.filter((o) => o.parcela), (o) => o.valor), fixos: E.sum(its.filter((o) => o.fixo), (o) => o.valor), ajuste: E.sum(its.filter((o) => o.tipo === 'ajuste'), (o) => o.valor) };
+    const comp = { compras: E.sum(its.filter((o) => !ehFixo(o) && !o.parcela && o.tipo !== 'ajuste'), (o) => o.valor), parcelas: E.sum(its.filter(ehParcela), (o) => o.valor), fixos: E.sum(its.filter(ehFixo), (o) => o.valor), ajuste: E.sum(its.filter((o) => o.tipo === 'ajuste'), (o) => o.valor) };
     const refs = Array.from({ length: 6 }, (_, i) => E.addMonthsYM(atual, i));
     const somaRef = (r) => E.sum(sel, (c) => E.sum(E.itensFatura(D().state, c.id, r, t), (o) => o.valor));
     S.charts.fut = { kind: 'col', months: refs, series: [{ name: todos ? 'Faturas somadas' : 'Fatura', color: 'var(--accent)', values: refs.map(somaRef) }], sel: ref, act: 'fatura-ref', labels: refs.map(mesCurto) };
@@ -1668,9 +1673,9 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const gastoM = meses12.map((ym, i) => gReal[i] + gPrev[i]);
     const gastoAll = meses12.map((ym) => Math.max(0, E.sum(d.occV.filter((o) => o.comp === ym), E.liquido)));
     S.charts.rxg = { kind: 'group', months: meses12, series: [{ name: 'Entradas', color: 'var(--s2)', values: rendaM }, { name: 'Gastos', color: 'var(--accent)', values: gastoAll }], sel: ate, act: 'rel-mes', labels: meses12.map((m) => MES3[+m.slice(5) - 1]) };
-    const fixM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.fixo), (o) => o.minha));
-    const parM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.parcela), (o) => o.minha));
-    const varM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && !o.fixo && !o.parcela), (o) => o.minha));
+    const fixM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && ehFixo(o)), (o) => o.minha));
+    const parM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && ehParcela(o)), (o) => o.minha));
+    const varM = meses12.map((ym) => E.sum(d.occV.filter((o) => o.comp === ym && o.tipo === 'despesa' && !ehFixo(o) && !o.parcela), (o) => o.minha));
     S.charts.fxv = { kind: 'stack', months: meses12, series: [{ name: 'Fixos', color: 'var(--accent)', values: fixM }, { name: 'Parcelas', color: 'var(--coin)', values: parM }, { name: 'Avulsos', color: 'var(--s2)', values: varM }], sel: ate, act: 'rel-mes', labels: meses12.map((m) => MES3[+m.slice(5) - 1]) };
     // Espólio
     const esp = gastos.filter((o) => o.espolio);
@@ -1680,7 +1685,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const meioRows = [...porMeio.entries()].sort((a, b) => b[1] - a[1]);
     const maxm = meioRows.length ? meioRows[0][1] : 1;
     // Maiores gastos
-    const top = gastos.filter((o) => !o.fixo).sort((a, b) => b.minha - a.minha).slice(0, 6);
+    const top = gastos.filter((o) => !ehFixo(o)).sort((a, b) => b.minha - a.minha).slice(0, 6);
     // Gastos divididos
     const div = gastos.filter((o) => o.div > 1);
     const pago = E.sum(div, (o) => o.valor), minha = E.sum(div, (o) => o.minha), recP = E.sum(div.filter((o) => !o.recebido), (o) => o.receber);
@@ -1789,10 +1794,20 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     };
     const ativos = S.recorrentes.filter((r) => !r.fim || r.fim >= ym).sort((a, b) => (a.tipo === b.tipo ? (a.desc < b.desc ? -1 : 1) : a.tipo === 'receita' ? 1 : -1));
     const enc = S.recorrentes.filter((r) => r.fim && r.fim < ym);
+    // parcelados marcados como custo fixo (seguros, planos anuais): aparecem aqui até a última parcela
+    const contratos = [];
+    const occF = E.expandir(D().state, ym, E.addMonthsYM(ym, 48), hoje()).filter((o) => o.origem === 'lanc' && o.custoFixo);
+    for (const o of occF) { const c = contratos.find((x) => x.id === o.refId); if (c) { if (o.comp > c.fim) c.fim = o.comp; if (o.comp < c.o.comp) c.o = o; } else contratos.push({ id: o.refId, o, fim: o.comp }); }
+    contratos.sort((a, b) => (a.o.desc < b.o.desc ? -1 : 1));
+    const rowC = (c) => { const meio = meioById(c.o.meioId); const s = [catNome(c.o.catId, c.o.subId), meio ? meio.nome : '', c.o.parcela ? `parcela ${c.o.parcela[0]}/${c.o.parcela[1]}${c.o.comp === ym ? ' neste mês' : ` em ${mesCurto(c.o.comp)}`}` : '', `até ${mesCurto(c.fim)}`].filter(Boolean).join(' · ');
+      return `<button class="li" data-act="open-occ" data-key="${esc(c.o.key)}"><span class="mono rec">${ic('repeat')}</span><span class="grow"><span class="t" style="display:block">${esc(c.o.desc)}</span><span class="s" style="display:block">${esc(s)}</span></span><span class="amt">${brl(c.o.valor)}${c.o.div > 1 ? `<small>sua parte ${brl(c.o.minha)}</small>` : ''}</span></button>`; };
     return `<div class="stack">
       <p class="small ink2" style="margin:0">Valores que se repetem todo mês. Eles entram sozinhos nas faturas, nos relatórios e na previsão. Mudou o valor? Edite e escolha a partir de quando vale.</p>
       <button class="btn pri" data-act="rec-new">${ic('plus')}Novo gasto ou entrada fixa</button>
       <div class="card list" style="padding-block:2px">${ativos.length ? ativos.map(row).join('') : emptyState('Nenhum fixo cadastrado', 'Cadastre assinaturas, seguros, repasses e salário.')}</div>
+      ${contratos.length ? `<section class="section"><div class="sec-h"><h2>Parcelados que contam como fixos</h2><b class="num">${brl(E.sum(contratos.filter((c) => c.o.comp === ym), (c) => c.o.minha))}</b></div>
+        <p class="small ink2" style="margin:0 0 8px">Seguros e planos pagos em parcelas: entram como gasto fixo até a última parcela, e a fatura mostra a parcela de cada mês.</p>
+        <div class="card list" style="padding-block:2px">${contratos.map(rowC).join('')}</div></section>` : ''}
       ${enc.length ? `<details class="tbl"><summary>Encerrados (${enc.length})</summary><div class="card list" style="padding-block:2px;margin-top:8px">${enc.map(row).join('')}</div></details>` : ''}
     </div>`;
   }
@@ -1899,7 +1914,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const meses = E.monthsBetween(de, ate);
     const occ = d.occV.filter((o) => o.comp >= de && o.comp <= ate && !o.previsto);
     const g = occ.filter((o) => o.tipo === 'despesa');
-    const avulsos = g.filter((o) => !o.fixo && !o.parcela);
+    const avulsos = g.filter((o) => !ehFixo(o) && !o.parcela);
     const rendas = occ.filter((o) => o.tipo === 'receita');
     const ress = occ.filter((o) => o.tipo === 'ressarcimento');
     const bruto = E.sum(g, (o) => o.minha), totRess = E.sum(ress, (o) => o.valor), liquido = bruto - totRess;
@@ -1907,8 +1922,8 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const porMes = meses.map((ym) => {
       const m = occ.filter((o) => o.comp === ym);
       return { ym, gasto: Math.max(0, E.sum(m, E.liquido)), renda: E.sum(m.filter((o) => o.tipo === 'receita'), (o) => o.valor),
-        fixos: E.sum(m.filter((o) => o.tipo === 'despesa' && o.fixo), (o) => o.minha), parcelas: E.sum(m.filter((o) => o.tipo === 'despesa' && o.parcela), (o) => o.minha),
-        avulsos: E.sum(m.filter((o) => o.tipo === 'despesa' && !o.fixo && !o.parcela), (o) => o.minha), n: m.filter((o) => o.origem === 'lanc').length };
+        fixos: E.sum(m.filter((o) => o.tipo === 'despesa' && ehFixo(o)), (o) => o.minha), parcelas: E.sum(m.filter((o) => o.tipo === 'despesa' && ehParcela(o)), (o) => o.minha),
+        avulsos: E.sum(m.filter((o) => o.tipo === 'despesa' && !ehFixo(o) && !o.parcela), (o) => o.minha), n: m.filter((o) => o.origem === 'lanc').length };
     });
     const cats = E.porCategoria(g, categorias());
     const semana = Array.from({ length: 7 }, (_, i) => ({ dia: i, total: 0, n: 0 }));
@@ -1938,7 +1953,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     }
     const comprometido = E.monthsBetween(E.addMonthsYM(ymT, 1), E.addMonthsYM(ymT, 6)).map((ym) => ({ ym,
       parcelas: E.sum(futuras.filter((o) => o.comp === ym), (o) => o.minha),
-      fixos: E.sum(d.occ.filter((o) => o.comp === ym && o.tipo === 'despesa' && o.fixo), (o) => o.minha) }));
+      fixos: E.sum(d.occ.filter((o) => o.comp === ym && o.tipo === 'despesa' && ehFixo(o)), (o) => o.minha) }));
     // divididos e espólio
     const div = g.filter((o) => o.div > 1);
     const esp = g.filter((o) => o.espolio);
@@ -1962,7 +1977,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const nm = R.meses.length;
     if (!R.g.length && !R.renda) return ['Ainda não há lançamentos no período. Lance seus gastos por alguns dias e gere o relatório de novo: as conclusões aparecem sozinhas.'];
     if (R.cats[0]) out.push(`<b>${esc(catSo(R.cats[0].catId))}</b> é onde mais vai o seu dinheiro: ${pct(R.cats[0].total, R.bruto)}% dos gastos (${brl(R.cats[0].total)}).${R.cats[1] ? ` Em seguida vem ${esc(catSo(R.cats[1].catId))}, com ${pct(R.cats[1].total, R.bruto)}%.` : ''}`);
-    const fixosP = E.sum(R.g.filter((o) => o.fixo), (o) => o.minha), parcP = E.sum(R.g.filter((o) => o.parcela), (o) => o.minha);
+    const fixosP = E.sum(R.g.filter(ehFixo), (o) => o.minha), parcP = E.sum(R.g.filter(ehParcela), (o) => o.minha);
     if (R.bruto) out.push(`${pct(fixosP + parcP, R.bruto)}% dos seus gastos já estavam "contratados" antes do mês começar (fixos ${brl(fixosP)} e parcelas ${brl(parcP)}). Os outros ${pct(R.bruto - fixosP - parcP, R.bruto)}% são escolhas do dia a dia.`);
     const sem = R.semana.slice().sort((a, b) => b.total - a.total);
     if (sem[0] && sem[0].total) out.push(`Nos gastos do dia a dia, <b>${DIAS_SEM[sem[0].dia].toLowerCase()}${sem[0].dia === 0 || sem[0].dia === 6 ? '' : '-feira'}</b> é o dia que mais pesa: ${pct(sem[0].total, E.sum(R.semana, (x) => x.total))}% do total, em ${sem[0].n} ${sem[0].n === 1 ? 'compra' : 'compras'}.`);
@@ -2122,8 +2137,11 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       if (k === 'inicioUso' && /^\d{4}-\d{2}-\d{2}$/.test(v)) prefs.inicioUso = v;
     }
     const apagar = (obj.apagar || []).map((id) => atuais.find((x) => x.id === String(id) && !x.excluido)).filter(Boolean);
+    // ajustar: acrescenta marcações (extras) em lançamentos que já existem, sem reenviar o resto
+    const ajustes = (obj.ajustar || []).map((a) => { const it = atuais.find((x) => x.id === String(a.id) && !x.excluido); if (!it) return null; const y = clone(it); y.extras = { ...(y.extras || {}), ...(a.extras || {}) }; return y; }).filter(Boolean);
+    if (ajustes.length && !temRecurso('extras')) throw new Error('Antes de importar, atualize o programa da planilha (Ajustes › Sobre o Todo dIA mostra como).');
     const fixosExcl = new Set(fixos.filter((f) => f.excluir).map((f) => f.r.id));
-    return { itens, fixos, meios: meiosP, novosMeios, prefs, apagar, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
+    return { itens, fixos, meios: meiosP, novosMeios, prefs, apagar, ajustes, cats, regras, recatItens, recatFixos: recatFixos.filter((r) => !fixosExcl.has(r.id)), titulo: obj.titulo || 'Importação' };
   }
   function viewCaixa() {
     const cx = caixa();
@@ -2196,6 +2214,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         ${p.ok.meios.map((x) => `<div class="hint">${ic('card')}<span>${esc(x.m.nome)}: ${Object.entries(x.set).map(([k, v]) => k === 'fechamento' ? `fechamento passa para o dia ${v}` : k === 'vencimento' ? `vencimento passa para o dia ${v}` : k === 'finais' ? `reconhece os finais ${v.map((f) => '••' + f).join(', ')}` : `nome: ${esc(v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.fixos.map((f) => `<div class="hint">${ic('repeat')}<span>${esc(f.r.desc)}: ${f.excluir ? 'será removido' : Object.entries(f.set).map(([k, v]) => k === 'fim' ? `termina em ${mesNome(v)}` : k === 'inicio' ? `começa em ${mesNome(v)}` : k === 'dia' ? `cobrança no dia ${esc(v)}` : k === 'meioId' ? `passa a ser cobrado no ${esc((meioById(v) || {}).nome || v)}` : k === 'valores' && Array.isArray(v) ? v.map((x) => `${mesNome(x.desde)} em diante: ${brl(x.valor)}${x.meioId ? ` no ${esc((meioById(x.meioId) || {}).nome || x.meioId)}` : ` no ${esc((meioById(f.set.meioId || f.r.meioId) || {}).nome || '')}`}`).join('; ') : `${esc(k)} = ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(', ')}</span></div>`).join('')}
         ${p.ok.apagar.map((i) => `<div class="hint">${ic('trash')}<span>${esc(i.desc)}: será apagado (vai para a lixeira)</span></div>`).join('')}
+        ${p.ok.ajustes.map((i) => `<div class="hint">${ic('repeat')}<span>${esc(i.desc)}: ${i.extras.fixo ? 'passa a contar como custo fixo até a última parcela' : 'ajustado'}</span></div>`).join('')}
         ${p.ok.cats ? `<div class="hint">${ic('tag')}<span>Categorias atualizadas (${p.ok.cats.length} categorias).</span></div>` : ''}
         ${p.ok.recatItens.length + p.ok.recatFixos.length ? `<div class="hint">${ic('tag')}<span>Mudam de categoria: ${[...p.ok.recatItens, ...p.ok.recatFixos].map((x) => esc(x.desc)).join(', ')}.</span></div>` : ''}
         ${p.ok.regras ? `<div class="hint">${ic('tag')}<span>Palavras aprendidas ajustadas.</span></div>` : ''}
@@ -2274,6 +2293,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       ${!isIn ? `<div class="toggle espolio"><span><b>Espólio</b><br><span class="small muted">${it.espolio ? 'Marcado: aparece separado nos relatórios' : 'Marque se é um custo do espólio'}</span></span><button class="switch" role="switch" aria-checked="${!!it.espolio}" data-act="l-esp" aria-label="Espólio"></button></div>` : ''}
       <details class="more" ${it.parcelas > 1 || it.div > 1 || it.obs ? 'open' : ''}><summary>Parcelas, divisão e observação ${ic('down')}</summary><div class="more-in">
         ${credit ? `<div class="toggle"><span><b>Parcelas</b><br><span class="small muted">${it.parcelas > 1 ? `${it.parcelas}x de ${brl(parc)}` : 'À vista'}</span></span><span class="stepper"><button data-act="l-parc" data-d="-1" aria-label="Menos parcelas">−</button><output>${it.parcelas}x</output><button data-act="l-parc" data-d="1" aria-label="Mais parcelas">+</button></span></div>` : ''}
+        ${credit && !isIn && (it.parcelas > 1 || it.parcelaIni > 1) ? `<div class="toggle"><span><b>Custo fixo</b><br><span class="small muted">${it.extras && it.extras.fixo ? 'Conta como gasto fixo até a última parcela' : 'Marque se é contrato: seguro, plano anual'}</span></span><button class="switch" role="switch" aria-checked="${!!(it.extras && it.extras.fixo)}" data-act="l-cfixo" aria-label="Custo fixo"></button></div>` : ''}
         ${!isIn ? `<div class="toggle"><span><b>Dividido</b><br><span class="small muted">${it.div > 1 ? `Sua parte ${brl(minha)} · a receber ${brl(it.valor - minha)}` : 'Você paga e outras pessoas te devolvem'}</span></span><button class="switch" role="switch" aria-checked="${it.div > 1}" data-act="l-div" aria-label="Dividido"></button></div>
         ${it.div > 1 ? `<div class="toggle"><span class="small ink2">Por quantas pessoas (contando você)</span><span class="stepper"><button data-act="l-divn" data-d="-1" aria-label="Menos pessoas">−</button><output>${it.div}</output><button data-act="l-divn" data-d="1" aria-label="Mais pessoas">+</button></span></div>${divComHtml(it, 'l-divcom', 'fDivNome')}` : ''}` : ''}
         <div class="field"><label for="fObs">Observação</label><input class="inp" id="fObs" value="${esc(it.obs || '')}" placeholder="Opcional" autocomplete="off"></div>
@@ -2595,7 +2615,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
     const ocs = d.occ.filter((o) => o.comp <= E.addMonthsYM(ymHoje(), 12)).slice().sort((a, b) => (a.data < b.data ? -1 : 1)).map((o) => ({
       Competência: o.comp, Data: o.data, Tipo: o.tipo, Descrição: o.desc, Categoria: catSo(o.catId), Subcategoria: subSo(o.catId, o.subId),
       'Forma de pagamento': (meioById(o.meioId) || {}).nome || '', Fatura: o.fatura || '', 'Valor (R$)': R(o.valor), 'Sua parte (R$)': R(o.minha),
-      'A receber (R$)': R(o.receber), Recebido: o.receber ? (o.recebido ? 'sim' : 'não') : '', Fixo: o.fixo ? 'sim' : '', Parcela: o.parcela ? o.parcela.join('/') : '', Previsto: o.previsto ? 'sim' : '',
+      'A receber (R$)': R(o.receber), Recebido: o.receber ? (o.recebido ? 'sim' : 'não') : '', Fixo: ehFixo(o) ? 'sim' : '', Parcela: o.parcela ? o.parcela.join('/') : '', Previsto: o.previsto ? 'sim' : '',
     }));
     const fixos = S.recorrentes.map((r) => ({ ID: r.id, Tipo: r.tipo, Descrição: r.desc, Categoria: catSo(r.catId), Subcategoria: subSo(r.catId, r.subId), 'Forma de pagamento': (meioById(r.meioId) || {}).nome || '', Dia: r.dia, Início: r.inicio, Fim: r.fim || '', 'Dividido por': r.div || 1, 'Valores (desde: R$)': (r.valores || []).map((v) => `${v.desde}: ${R(v.valor)}`).join(' | ') }));
     const ms = meios().map((m) => ({ ID: m.id, Nome: m.nome, Banco: m.banco, Tipo: TIPOS_MEIO[m.tipo] || m.tipo, Fechamento: m.fechamento || '', Vencimento: m.vencimento || '', Ativo: m.ativo === false ? 'não' : 'sim' }));
@@ -2908,12 +2928,13 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
         if (p.regras) { S.cfg.regras = p.regras; saveConfig('regras', p.regras); }
         for (const it of p.itens) saveItem(clone(it));
         for (const it of p.recatItens) saveItem(clone(it), null);
+        for (const it of p.ajustes) saveItem(clone(it), null);
         for (const r of p.recatFixos) saveRec(r);
         for (const it of p.apagar) { const r = clone(it); r.excluido = true; r.excluidoEm = Date.now(); saveItem(r, null); }
         if (Object.keys(p.prefs).length) savePrefs(p.prefs);
         if (p.meios.length || p.novosMeios.length) { const lista = clone(meios()); for (const x of p.meios) Object.assign(lista.find((y) => y.id === x.m.id), x.set); lista.push(...p.novosMeios); saveMeios(lista); }
         for (const f of p.fixos) { const r = clone(f.r); if (f.excluir) r.excluido = true; Object.assign(r, f.set); saveRec(r); }
-        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.apagar.length ? `, ${p.apagar.length} apagados` : ''}${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}${p.novosMeios.length ? ' e nova forma de pagamento criada' : ''}.`);
+        S.ui.imp = null; toast(`Importado: ${p.itens.length} lançamentos${p.apagar.length ? `, ${p.apagar.length} apagados` : ''}${p.ajustes.length ? `, ${p.ajustes.length} ajustados` : ''}${p.fixos.length ? `, ${p.fixos.length} ${p.fixos.length === 1 ? 'fixo ajustado' : 'fixos ajustados'}` : ''}${p.meios.length ? ' e cartão atualizado' : ''}${p.novosMeios.length ? ' e nova forma de pagamento criada' : ''}.`);
         setTab('cartoes'); break;
       }
       case 'lock-on': ligarTrava(); break;
@@ -2955,6 +2976,7 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       case 'l-meio': st.it.meioId = el.dataset.id; st.meioManual = true; renderLanc(); break;
       case 'l-data': st.it.data = el.dataset.v; renderLanc(); break;
       case 'l-parc': st.it.parcelas = Math.min(48, Math.max(1, (st.it.parcelas || 1) + +el.dataset.d)); renderLanc(); break;
+      case 'l-cfixo': { const it = st.it; it.extras = { ...(it.extras || {}) }; if (it.extras.fixo) delete it.extras.fixo; else it.extras.fixo = true; renderLanc(); break; }
       case 'l-esp': st.espManual = true; st.it.espolio = !st.it.espolio; renderLanc(); break;
       case 'l-div': st.divManual = true; st.it.div = st.it.div > 1 ? 1 : ((E.findSub(categorias(), st.it.catId, st.it.subId) || {}).div || 2); renderLanc(); break;
       case 'l-divcom': { const it = st.it; it.extras = { ...(it.extras || {}), divCom: el.dataset.v }; if (el.dataset.v === 'familia') delete it.extras.divNome; renderLanc(); break; }
@@ -3126,7 +3148,9 @@ if (typeof module !== 'undefined') module.exports = Taxonomy;
       if (document.hidden) { S.hiddenAt = Date.now(); return; }
       if (lockCfg() && !S.locked && S.hiddenAt && Date.now() - S.hiddenAt > 60000) { trancar(); desbloquear(); }
     });
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && !S.locked) { if (novoDia()) render(); if (Date.now() - S.lastSync > 60000 || S.outbox.length) sync(); } });
+    // ao voltar para o app, busca novidades (ex.: compras da Carteira); aberto, confere a cada 2 minutos
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !S.locked) { if (novoDia()) render(); if (Date.now() - S.lastSync > 5000 || S.outbox.length) sync(); } });
+    setInterval(() => { if (!document.hidden && !S.locked && S.conn && Date.now() - S.lastSync > 110000) sync(); }, 30000);
     setInterval(() => { if (!document.hidden && (S.outbox.length || Date.now() - S.lastSync > 300000)) sync(); }, 60000);
     window.addEventListener('error', (e) => console.error('erro', e.message));
     window.addEventListener('unhandledrejection', (e) => console.warn('promessa', e.reason));

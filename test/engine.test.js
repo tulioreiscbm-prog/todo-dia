@@ -317,3 +317,16 @@ test('dividido: família ou outras pessoas', () => {
   const com = Object.fromEntries(occ.map((o) => [o.refId, [o.divCom, o.divNome]]));
   assert.deepEqual(com, { a: ['outros', ''], b: ['familia', ''], c: ['outros', 'Ana'], d: ['familia', ''], e: [null, ''] });
 });
+
+test('parcelado marcado como custo fixo conta em "fixos", não em "parcelas"', () => {
+  const meios = [{ id: 'inter-credito', tipo: 'credito', fechamento: 30, vencimento: 7 }];
+  const itens = [
+    { id: 'seg', tipo: 'despesa', desc: 'Seguro do carro', valor: 220860, parcelas: 9, parcelaIni: 4, data: '2026-10-01', meioId: 'inter-credito', extras: { fixo: true } },
+    { id: 'tv', tipo: 'despesa', desc: 'TV', valor: 30000, parcelas: 3, data: '2026-10-20', meioId: 'inter-credito' },
+  ];
+  const occ = E.expandir({ meios, itens, recorrentes: [] }, '2026-11', '2026-11', '2026-11-02');
+  const r = E.resumoMes(occ, '2026-11');
+  assert.deepEqual([r.fixos, r.parcelas, r.gastoReal], [24540, 10000, 34540]);
+  const seg = occ.find((o) => o.refId === 'seg');
+  assert.deepEqual([seg.custoFixo, seg.parcela, seg.fatura], [true, [4, 12], '2026-11']);
+});

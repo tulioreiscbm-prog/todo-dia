@@ -434,6 +434,8 @@ const Engine = (() => {
           fixo: false, parcela: parcelado ? [ini + k, total] : null, parcelaAntiga: ini > 1, fatura: f ? f.ref : null,
           previsto: dataOc > hoje, obs: it.obs || '', espolio: !!it.espolio,
           divCom: divisaoCom(it, div), divNome: div > 1 ? String((it.extras && it.extras.divNome) || '') : '',
+          // parcelado que é contrato (seguro, plano anual): conta como custo fixo até a última parcela
+          custoFixo: it.tipo === 'despesa' && !!(it.extras && it.extras.fixo),
         });
       }
     }
@@ -456,7 +458,7 @@ const Engine = (() => {
           comp: ym, valor, div, minha, receber: rec.tipo === 'ressarcimento' ? valor : valor - minha,
           recebido: !!(rec.recebidos && rec.recebidos[ym]), fixo: true, parcela: null,
           fatura: f ? f.ref : null, previsto: desde > hoje, obs: '', espolio: !!rec.espolio,
-          divCom: divisaoCom(rec, div), divNome: div > 1 ? String((rec.extras && rec.extras.divNome) || '') : '',
+          divCom: divisaoCom(rec, div), divNome: div > 1 ? String((rec.extras && rec.extras.divNome) || '') : '', custoFixo: true,
         });
       }
     }
@@ -492,10 +494,10 @@ const Engine = (() => {
       rendaReal: sum(r.filter((o) => !o.previsto), (o) => o.valor),
       rendaPrev: sum(r.filter((o) => o.previsto), (o) => o.valor),
       receber: sum(m.filter((o) => o.receber > 0 && !o.recebido && (isGasto(o) || isRessarc(o))), (o) => o.receber),
-      fixos: sum(g.filter((o) => o.fixo), (o) => o.minha),
-      parcelas: sum(g.filter((o) => o.parcela), (o) => o.minha),
+      fixos: sum(g.filter((o) => o.fixo || o.custoFixo), (o) => o.minha),
+      parcelas: sum(g.filter((o) => o.parcela && !o.custoFixo), (o) => o.minha),
       espolio: sum(g.filter((o) => o.espolio), (o) => o.minha),
-      variaveis: sum(g.filter((o) => !o.fixo && !o.parcela), (o) => o.minha),
+      variaveis: sum(g.filter((o) => !o.fixo && !o.custoFixo && !o.parcela), (o) => o.minha),
       n: m.filter((o) => o.origem === 'lanc').length,
     };
   }
